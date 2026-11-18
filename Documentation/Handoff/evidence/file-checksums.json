@@ -1,0 +1,9 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "package-manifest.json": "a8682134e783ab68f28c65657ab2610017014fc739a27f27ca77b1659a2e7865",
+    "standalone-success-diagnostic.txt": "b1ea28ed8e1108ecfec994093e7f780b9034068531be8233ae098f39d8a11bbb",
+    "verification.json": "1d986a8c77d243a8959a5c0c7d88cfd94f08b023055e535834056fb2c2dd75a5",
+    "version-baselines.json": "150f90e04ec1fc372389f0e35b1f6405bb65bd53e02be1d8f467d45967e66cfe"
+  }
+}

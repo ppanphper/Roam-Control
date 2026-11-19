@@ -1,6 +1,12 @@
 # 下一轮版本与功能对齐
 
-此文件提供核查起点，不是已完成的全量差异分析，也不是已经批准的功能实施清单。
+此文件保留核查起点。用户随后已批准完整功能对齐；当前范围与交付以[实施计划](../../docs/version-alignment/implementation-plan.md)和[实际验证记录](../../docs/version-alignment/implementation-status.md)为准，下文只作为实施前证据。
+
+## 2026-11-18 本轮核查结果
+
+首先完成[版本与功能证据对齐](../../docs/version-alignment/2026-11-18-version-and-feature-alignment.md)：重新确认官方 v0.9.9 Build 105；复核参考 IPA 身份；检查功能调用链，并取得原样 unsigned 编译失败证据。随后用户扩大范围，授权完整实现。原样失败记录不代表修复后的构建状态；手机始终未操作。
+
+任务分支 `codex/version-alignment-20261118`，工作区 `/Volumes/Extra disk/Directories/Users/pandy/ai-code/Roam-Control-version-alignment-20261118`；起始基准 `main@402ff6f`，预期合并目标 `origin/main`，远程 `origin`；未提交/推送，无 PR，工作区保留。下文保留迁入时快照；“尚未编译”等历史状态以本轮报告中的实际结果更新。
 
 ## 三条独立基线
 

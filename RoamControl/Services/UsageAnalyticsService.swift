@@ -8,7 +8,22 @@ enum UsageAnalyticsEvent: String {
     case pairingCompleted = "RoamControl.Pairing.completed"
     case fixedLocationStarted = "RoamControl.Location.fixedStarted"
     case walkingStarted = "RoamControl.Location.walkingStarted"
+    case cyclingStarted = "RoamControl.Location.cyclingStarted"
+    case drivingStarted = "RoamControl.Location.drivingStarted"
+    case joystickStarted = "RoamControl.Location.joystickStarted"
     case activeLocationUpdated = "RoamControl.Location.activeUpdated"
+
+    static func sessionStarted(for recovery: SessionRecoveryRecord) -> Self {
+        guard let movement = recovery.movement else {
+            return recovery.kind == .walkingRoute ? .walkingStarted : .fixedLocationStarted
+        }
+        if movement.isJoystick { return .joystickStarted }
+        switch movement.mode {
+        case .walking: return .walkingStarted
+        case .cycling: return .cyclingStarted
+        case .driving: return .drivingStarted
+        }
+    }
 }
 
 /// Sends a deliberately small, fixed set of anonymous usage signals.

@@ -1,0 +1,129 @@
+{
+  "recorded_at": "2026-11-18T03:36:27.101210-08:00",
+  "state": "implemented-and-locally-verified-device-pending",
+  "device_operations": false,
+  "target": "iPhone 13 Pro / iOS 26.5.2 (23F84), LiveContainer + LocalDevVPN, no paid developer membership",
+  "simulator": "iPhone 13 Pro / iOS 26.2 / 037070A9-B9A1-4988-B6DE-8B1E381BF519",
+  "test_logs": [
+    {
+      "name": "app-model-tests.log",
+      "path": "work/version-alignment/implementation/app-model-tests.log",
+      "sha256": "5c97aad5caec8e9ba13fa358d3463e5a65238686ce8e9cf06a75e804b24ea930",
+      "summary": "PASS: 30 AppModel integration checks (transport double; no device execution)\n"
+    },
+    {
+      "name": "feature-data-tests.log",
+      "path": "work/version-alignment/implementation/feature-data-tests.log",
+      "sha256": "b3fed87b84bd8fbb800c80ab316ecf1cf73ac00fd2df31481cd2ba580a26fc64",
+      "summary": "PASS: 53 feature-data checks\n"
+    },
+    {
+      "name": "movement-tests-final.log",
+      "path": "work/version-alignment/implementation/movement-tests-final.log",
+      "sha256": "37250a909f710f22c28916fa90a9162203aaf8fbdc5aafd97a7e189b80b6b4c8",
+      "summary": "PASS route and GPX: JSON validation, disconnected tracks, namespace rules, unsafe XML, limits and geometry round trip\nPASS compatibility: Beijing reference, eligible sources, explicit WGS84, unsupported regions and Off\nPASS redirect: GPX ↔ map in mainland China, 150 m gate, restored reversal and Off/Force\nPASS physics: acceleration, steering, road corner braking and hold, arrival, monotonic time bounds and joystick release\nPASS controller: 5 Hz, pause persistence, reverse, device failure, recovery, release and stop during startup\nPASS iOS simulator SDK typecheck (isolated movement sources)\n"
+    },
+    {
+      "name": "localization-tests.log",
+      "path": "work/version-alignment/implementation/localization-tests.log",
+      "sha256": "4d457b87eaffa894a64e15a08d95828dcd07fb3d469c2a7ed2f934f5fa18c33c",
+      "summary": "PASS: 13 localization message checks\n"
+    },
+    {
+      "name": "update-tests.log",
+      "path": "work/version-alignment/implementation/update-tests.log",
+      "sha256": "20cdd18f3add1347220d0788592bb37072a5cfcd5bb02be535473b6a842aaa8a",
+      "summary": "PASS: release update notice checks\n"
+    },
+    {
+      "name": "runtime-rust-test.log",
+      "path": "work/version-alignment/implementation/runtime-rust-test.log",
+      "sha256": "459ecf9af09a3d9fcdc4f89984b8de379adb6f5ae0f24260a9bb31bfd6647170",
+      "summary": "   Compiling roam_pairing_ffi v0.1.0 (/Volumes/Extra disk/Directories/Users/pandy/ai-code/Roam-Control-version-alignment-20261118/Native/RoamPairingFFI)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.92s\n     Running unittests src/lib.rs (work/version-alignment/implementation/rust-target/debug/deps/roam_pairing_ffi-0f12a608c99f357c)\n\nrunning 4 tests\ntest tests::pre_cancelled_pairing_never_waits_for_a_peer ... ok\ntest tests::pre_cancelled_restore_does_not_confirm_a_clear ... ok\ntest tests::pre_cancelled_start_never_attempts_to_connect_or_clear ... ok\ntest tests::discovery_requires_a_16_byte_device_identity ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "name": "localization-validation.log",
+      "path": "work/version-alignment/implementation/localization-validation.log",
+      "sha256": "9f57fdbf8ed7e2a4643ceb8c022338fa7582bc9629457ed207441eefd5b49ec3",
+      "summary": "PASS: 10 languages × 635 keys; printf arguments, permissions and resource syntax\n"
+    }
+  ],
+  "ui_runs": [
+    {
+      "path": "work/ui-validation-2026-11-18_03-23-41",
+      "sha256": "354156b2d0b7b9a36080576946c946057fdbd536770b89de18b872c1d43d6d66",
+      "passed_cases": [
+        "testHomeAndSettings",
+        "testLanguageSwitchAndRTL",
+        "testLargeTextControls",
+        "testMapRouteAndJoystick",
+        "testPointRouteAndGPXPicker"
+      ],
+      "failed_cases": [],
+      "note": "All selected tests passed."
+    },
+    {
+      "path": "work/ui-validation-2026-11-18_03-28-35",
+      "sha256": "79167c44a3b4bc94b3fea1a117284773626e6d1c311ae50e5997b0aef3261e45",
+      "passed_cases": [
+        "testLargeTextControls",
+        "testMapRouteAndJoystick",
+        "testPointRouteAndGPXPicker"
+      ],
+      "failed_cases": [
+        "testDarkFreehandAndCollapse"
+      ],
+      "note": "03-28 dark test only failed on the cleanup selector Automatic; corrected to Auto and the full affected test passed in 03-32."
+    },
+    {
+      "path": "work/ui-validation-2026-11-18_03-32-20",
+      "sha256": "e42a9b68e5c42947f5b6da9a840f95692a58a973484f182262a063274beeafc2",
+      "passed_cases": [
+        "testDarkFreehandAndCollapse"
+      ],
+      "failed_cases": [],
+      "note": "All selected tests passed."
+    }
+  ],
+  "ipa": {
+    "file": "Roam-Control-0.9.9-Build30-2026-11-18_03-32-54.ipa",
+    "sha256": "306eacc9b0aadceec86306c193f303819c8bc136d292cd118209d12f5703becd",
+    "bytes": 3481951
+  },
+  "builds": [
+    {
+      "path": "work/ui-validation-2026-11-18_03-32-20/build.log",
+      "sha256": "8bd4b45189341c2dd2ee3d99718d5ab42d9297def356a8152f0a9b586ef883e7",
+      "status": "passed"
+    },
+    {
+      "path": "work/personal-release/archive-2026-11-18_03-32-54.log",
+      "sha256": "20b9a6858c2baaeb1a916ae874083bc83d40a925e4e72eef0a50c71e5a744288",
+      "status": "passed"
+    }
+  ],
+  "worktree_closeout": {
+    "status": "pending",
+    "blockers": [
+      {
+        "code": "local_not_merged",
+        "detail": "local 分支最新提交尚未被目标证明包含: 402ff6fb9bad17746a2a7883a944c43a5c2f4974；squash/rebase 请提供 --pr"
+      },
+      {
+        "code": "dirty_worktree",
+        "detail": "工作区有未提交/未跟踪文件，需先保存并处理"
+      },
+      {
+        "code": "ignored_files",
+        "detail": "工作区有 ignored 文件；先转存，或指定工作区外的 --backup-dir"
+      },
+      {
+        "code": "worktree_busy",
+        "detail": "工作区仍被进程使用，PID: 80417, 80731"
+      }
+    ],
+    "remaining": null,
+    "next_steps": [],
+    "raw_sha256": "7c84c7bb23870e879075212166b50f7ad0b573c3d629d362556e9a4b6bffd20a"
+  }
+}

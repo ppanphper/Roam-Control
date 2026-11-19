@@ -1,0 +1,40 @@
+{
+  "claude_code_version": "2.1.303",
+  "node_runtime": "24.22.1",
+  "requested_model": "opus",
+  "read_only_tools": [
+    "Read",
+    "Glob",
+    "Grep"
+  ],
+  "permission_mode": "dontAsk",
+  "safe_mode": true,
+  "base_commit": "402ff6fb9bad17746a2a7883a944c43a5c2f4974",
+  "branch": "codex/version-alignment-20261118",
+  "audit_source_unchanged": true,
+  "physical_device_operations": false,
+  "audits": {
+    "feature": {
+      "reported_model": "claude-opus-5-5",
+      "session_id": "38a29261-4d3f-4824-980a-45a1d0f5dc4c",
+      "prompt_sha256": "38db7db07682f201eaa71d3a9c926e25e658b7117254ee20da08e8feedb5a1f1",
+      "report_sha256": "618bf22007796837ed69a141e34d56e3f102c439d309a959843bac1356bb34c3",
+      "complete": true,
+      "is_error": false,
+      "permission_denials": [],
+      "num_turns": 86
+    },
+    "runtime": {
+      "reported_model": "claude-opus-5-5",
+      "session_id": "5f8f1c76-f831-49f0-88e1-180a09764e71",
+      "prompt_sha256": "c1e8ea7fdfb408d07708f6cf44c1f71b3a3f7df7df7d7c79fa63d56fd715c9ca",
+      "report_sha256": "ae583cdbf762c5247064468a87157387b9105253c663a4a07396e7e87c88723a",
+      "complete": true,
+      "is_error": false,
+      "permission_denials": [],
+      "num_turns": 87
+    }
+  },
+  "source_snapshot_sha256": "9bc939afe58e046bf378aafc916add3c426fdc43f12d979b1c5892b997288fc0",
+  "captured_at": "2026-11-18T19:24:46.993296-08:00"
+}

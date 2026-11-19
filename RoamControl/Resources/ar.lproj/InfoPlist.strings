@@ -1,0 +1,4 @@
+/* Public feature parity: localized app and permission text. */
+"CFBundleDisplayName" = "Roam Control Dev";
+"NSLocalNetworkUsageDescription" = "يستخدم Roam Control الشبكة المحلية لإقران هذا الـ iPhone والتحكم به بشكل آمن عبر LocalDevVPN.";
+"NSLocationWhenInUseUsageDescription" = "يستخدم Roam Control موقعك لعرض موضعك الحقيقي وإعادة توسيط الخريطة حوله بعد انتهاء جلسة الموقع.";

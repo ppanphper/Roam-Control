@@ -1,0 +1,143 @@
+{
+  "recorded_at": "2026-11-18T20:26:25.475493-08:00",
+  "state": "code-audit-and-local-validation-complete-device-pending",
+  "physical_device_operations": false,
+  "audit_rounds": 4,
+  "audit_reports": 6,
+  "audit_tool": "Claude Code 2.1.303 / Node 24.22.1 / claude-opus-5-5",
+  "audit_unresolved_confirmed_source_findings": 0,
+  "source_unchanged_during_review": true,
+  "post_review_changes": {
+    "files": [
+      "Tests/AppModelIntegrationTests.swift",
+      "RoamControl/Models/MovementRoute.swift"
+    ],
+    "reason": "Complete decoded-record equality replaces unordered JSON byte comparison after state transitions; pre-write byte invariance remains asserted. Production sources unchanged. Publication formatting removes exactly one empty EOF line from MovementRoute.swift; executable logic unchanged, Release package rebuilt."
+  },
+  "source_snapshot_sha256": "e12c6c448805874a23b86048449de03f7768672af449fdd51f5519f2b7339d08",
+  "ipa": {
+    "path": "outputs/Roam-Control-0.9.9-Build31-2026-11-18_22-10-38.ipa",
+    "sha256": "6efb93239fc96f6ca64375c35e2220471f10a25f90f77759db064710c0752eee",
+    "bytes": 3590420,
+    "manifest": "outputs/Roam-Control-0.9.9-Build31-2026-11-18_22-10-38.json",
+    "matches_current_build_sources": true,
+    "build_source_file_count": 103
+  },
+  "logs": [
+    {
+      "path": "work/claude-audit-20261118/app-model-final.log",
+      "sha256": "5c97aad5caec8e9ba13fa358d3463e5a65238686ce8e9cf06a75e804b24ea930"
+    },
+    {
+      "path": "work/claude-audit-20261118/app-model-stability-final.log",
+      "sha256": "6b4596ea133771fddd5ed59ff1653e6b25b1e8002865ed62ad9191e42fed802e"
+    },
+    {
+      "path": "work/claude-audit-20261118/app-model-raw-json-failure.log",
+      "sha256": "767d1e78cf193b975c550796bb0e0b094dea71b960900b419a928fc5a47a1faa"
+    },
+    {
+      "path": "work/claude-audit-20261118/recovery-serialization-diagnostic.log",
+      "sha256": "18b7ce0ecce2ec126c38dea78cf107b21c8badff076422662a0b1259ada6597c"
+    },
+    {
+      "path": "work/claude-audit-20261118/app-regressions-final.log",
+      "sha256": "3d724dcac124778b065a3a087ef8b8d7b9238dd5072825162f72c3b136789840"
+    },
+    {
+      "path": "work/claude-audit-20261118/recovery-promotion-before.log",
+      "sha256": "f0b9ba428c45f0b57af14862b0900dfda594dd65b716075de1a757f15cb7a133"
+    },
+    {
+      "path": "work/claude-audit-20261118/feature-data-final.log",
+      "sha256": "b3fed87b84bd8fbb800c80ab316ecf1cf73ac00fd2df31481cd2ba580a26fc64"
+    },
+    {
+      "path": "work/claude-audit-20261118/movement-final.log",
+      "sha256": "cf0e38bda0544cc20fa4de11d345e6018af5038fa4d0cff47a940b7dfef87865"
+    },
+    {
+      "path": "work/claude-audit-20261118/movement-lifecycle-final.log",
+      "sha256": "60ac3b5d5f001e29b34d3cd77cb2327ef1f3edaa732f3873f68b25de8beff17a"
+    },
+    {
+      "path": "work/claude-audit-20261118/map-interpolator-after.log",
+      "sha256": "19a7f1b132ca7cd615a2bf353e66fd75affad809d82ff06fb8ad12bc4c4b3b12"
+    },
+    {
+      "path": "work/claude-audit-20261118/runtime-policies-final.log",
+      "sha256": "34a7dd7bd32e783acf671aecaef3a7b45bd460b2c44067e3ce6c587f3ba72b81"
+    },
+    {
+      "path": "work/claude-audit-20261118/rust-after.log",
+      "sha256": "9ca2f84dd50a13e666c9493568604c1622f761562a6400984b22822fcfb3b171"
+    },
+    {
+      "path": "work/claude-audit-20261118/native-rebuild.log",
+      "sha256": "b05148cd6bcf6a91213bb9456a9343cb021985e6f4e5119c44c7fc21c245914b"
+    },
+    {
+      "path": "work/claude-audit-20261118/localization-compiler-final.log",
+      "sha256": "8cf064afec030bd33ac7271005dd4aa949b62c27533929b52b9e27640bc7509f"
+    },
+    {
+      "path": "work/claude-audit-20261118/package-final.log",
+      "sha256": "c5ed2a0b506ca910ab4c3ebf37567213d2181e6d5d489944776760e2e0435bbf"
+    },
+    {
+      "path": "work/claude-audit-20261118/simulator-runtime-errors-final.log",
+      "sha256": "875137b468ec484d580696a0a1ae4b391b32e371c55e3f61c83b4d9e8db479c6"
+    },
+    {
+      "path": "work/ui-validation-2026-11-18_20-13-05/build.log",
+      "sha256": "c6dc8b63f3a65ede0865ef1de9606dc3ed5a483872bf4fde5743a58c0c0f5878"
+    },
+    {
+      "path": "work/ui-validation-2026-11-18_20-13-05/test.log",
+      "sha256": "d9f04dc0b5370f4452d37c43670678918efa3906683b3c4319e2deb6ed2419ed"
+    },
+    {
+      "path": "work/ui-validation-2026-11-18_20-19-17/build.log",
+      "sha256": "36fcb5f4763f48575a31a5f1e14d87b6a1ccb2eb0f462ba670044d379b18274f"
+    },
+    {
+      "path": "work/ui-validation-2026-11-18_20-19-17/test.log",
+      "sha256": "94be24b2f149a326f074a6144ed6a523f191df1df7aa3622de019c1d92bd6193"
+    },
+    {
+      "path": "work/claude-audit-20261118/package-publication.log",
+      "sha256": "b6f81bcd5203f694413bd701977cb1389f8f81a2f966990b33cfe13d462b6f7b"
+    }
+  ],
+  "checks": {
+    "app_model": 30,
+    "app_model_additional_stability_executions": 5,
+    "audit_regressions": 36,
+    "feature_data": 53,
+    "movement_lifecycle": 8,
+    "movement_groups": 6,
+    "map_interpolation_groups": 4,
+    "rust": 10,
+    "runtime_policies": "passed",
+    "release_ui": 8,
+    "release_ui_failures": 0,
+    "release_ui_seconds": 129.513,
+    "final_source_release_launch": 1,
+    "final_source_release_launch_failures": 0,
+    "final_source_release_launch_seconds": 19.492,
+    "language_count": 10,
+    "keys_per_language": 647,
+    "compiler_ui_keys": 309
+  },
+  "ui_source_scope": "8-test suite preceded final AppModel-only recovery fix; final AppModel/regression tests, device Release archive, Simulator Release rebuild and 1 launch/relaunch/import-cancel UI test ran afterward. UI source unchanged.",
+  "screenshots": "outputs/audit-build31-final/",
+  "simulator": "iPhone 13 Pro / iOS 26.2 / 037070A9-B9A1-4988-B6DE-8B1E381BF519",
+  "closeout": "pending",
+  "limitations": [
+    "DTX tests use synthetic frames, not real device responses",
+    "Unsigned simulator Keychain fails; actual pairing is not verified",
+    "LiveContainer iOS26.5.2 startup/pairing/callback/notification/tunnel/location/background/GPS need user validation",
+    "Runtime diagnostics include MapKit VectorKit assertion, CoreLocation permission and XCTest accessibility errors; no claim of zero logged errors",
+    "Closed-source algorithms, private backups and system timezone behavior are not proven equivalent"
+  ]
+}

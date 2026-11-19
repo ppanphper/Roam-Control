@@ -1,6 +1,6 @@
 import Foundation
 
-enum AppAppearance: String, CaseIterable, Identifiable {
+enum AppAppearance: String, Codable, CaseIterable, Identifiable {
     case automatic
     case light
     case dark
@@ -24,7 +24,7 @@ enum AppAppearance: String, CaseIterable, Identifiable {
     }
 }
 
-enum MapDisplayStyle: String, CaseIterable, Identifiable {
+enum MapDisplayStyle: String, Codable, CaseIterable, Identifiable {
     case standard
     case satellite
     case hybrid

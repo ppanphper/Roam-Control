@@ -1,10 +1,13 @@
 import SwiftUI
 
 struct ConnectionHealthView: View {
+    @Environment(\.appLocalization) private var l10n
     @Environment(AppModel.self) private var appModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var diagnostics = ConnectionDiagnosticsCoordinator()
     @State private var isShowingDeviceSetup = false
+    @State private var isReviewingReport = false
+    @State private var includesLocation = false
 
     var body: some View {
         List {
@@ -29,14 +32,16 @@ struct ConnectionHealthView: View {
                     symbol: sessionSymbol,
                     color: sessionColor
                 )
+                LabeledContent("Execution", value: l10n.text(executionValue))
+                LabeledContent("Restoration", value: l10n.text(restorationValue))
             }
 
             Section("Current Location") {
-                LabeledContent("Place", value: activeTarget?.name ?? "None")
-                LabeledContent("Coordinates", value: coordinatesValue)
+                LabeledContent("Place", value: activeTarget.map(l10n.name) ?? l10n.text("None"))
+                LabeledContent("Coordinates", value: renderedCoordinates)
 
                 if let activeTarget, !activeTarget.subtitle.isEmpty {
-                    LabeledContent("Area", value: activeTarget.subtitle)
+                    LabeledContent("Area", value: l10n.subtitle(of: activeTarget))
                 }
             }
 
@@ -55,7 +60,7 @@ struct ConnectionHealthView: View {
                 .disabled(diagnostics.state == .running)
 
                 if let resultMessage {
-                    Label(resultMessage, systemImage: resultSymbol)
+                    Label(l10n.text(resultMessage), systemImage: resultSymbol)
                         .font(.subheadline)
                         .foregroundStyle(resultColor)
                 }
@@ -63,7 +68,7 @@ struct ConnectionHealthView: View {
                 if let lastChecked = diagnostics.lastChecked {
                     LabeledContent(
                         "Last checked",
-                        value: lastChecked.formatted(date: .omitted, time: .shortened)
+                        value: lastChecked.formatted(.dateTime.hour().minute().locale(l10n.locale))
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -75,14 +80,14 @@ struct ConnectionHealthView: View {
             }
 
             Section {
-                ShareLink(
-                    item: diagnosticsText,
-                    subject: Text("Roam Control Diagnostics")
-                ) {
-                    Label("Share Diagnostics", systemImage: "square.and.arrow.up")
-                }
+                Button("Review Diagnostics", systemImage: "doc.text.magnifyingglass") { isReviewingReport = true }
             } footer: {
-                Text("Choose where to send or save the report using the iOS share sheet. It never includes pairing keys or PINs.")
+                Text("Review the report before choosing where to share it. Location details are excluded by default. Pairing keys and PINs are never included.")
+            }
+
+            Section("Other VPNs") {
+                Text("LocalDevVPN must remain connected. A Personal VPN may coexist, but another Device VPN can replace its tunnel. If connection fails, pause the other VPN and retry while keeping LocalDevVPN enabled.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
 
             Section("Help") {
@@ -98,7 +103,7 @@ struct ConnectionHealthView: View {
                 }
             }
         }
-        .navigationTitle("Connection Health")
+        .navigationTitle(Text(verbatim: l10n.text("Connection Health")))
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear {
             diagnostics.cancel()
@@ -106,6 +111,19 @@ struct ConnectionHealthView: View {
         .sheet(isPresented: $isShowingDeviceSetup) {
             PairingSetupView()
                 .environment(appModel)
+        }
+        .sheet(isPresented: $isReviewingReport) {
+            NavigationStack {
+                List {
+                    Toggle("Include Place and Coordinates", isOn: $includesLocation)
+                    Text(diagnosticsText).font(.footnote.monospaced()).textSelection(.enabled)
+                    ShareLink(item: diagnosticsText, subject: Text("Roam Control Diagnostics")) {
+                        Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .navigationTitle(Text(verbatim: l10n.text("Review Diagnostics")))
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { isReviewingReport = false } } }
+            }
         }
     }
 
@@ -119,6 +137,10 @@ struct ConnectionHealthView: View {
     private var coordinatesValue: String {
         guard let activeTarget else { return "None" }
         return String(format: "%.5f, %.5f", activeTarget.latitude, activeTarget.longitude)
+    }
+
+    private var renderedCoordinates: String {
+        activeTarget == nil ? l10n.text("None") : l10n.technical(coordinatesValue)
     }
 
     private var pairingValue: String {
@@ -213,6 +235,26 @@ struct ConnectionHealthView: View {
         }
     }
 
+    private var executionValue: String {
+        switch appModel.deviceSession.executionMode {
+        case .inactive: "Inactive"
+        case .waitingForSystem: "Waiting for iOS"
+        case .background: "Background Task"
+        case .foregroundOnly: "Keep This App Open"
+        }
+    }
+
+    private var restorationValue: String {
+        switch appModel.deviceSession.restorationStatus {
+        case .notRequired: "Not Required"
+        case .pending: "Location May Still Be Simulated"
+        case .clearing: "Clearing Simulated Location…"
+        case .deviceConfirmed: "Device Confirmed Clear; Waiting for Real GPS"
+        case .userConfirmed: "Confirmed by You"
+        case .requiresRecovery: "Recovery Required"
+        }
+    }
+
     private var resultMessage: String? {
         switch diagnostics.state {
         case .notRun, .running: nil
@@ -249,8 +291,8 @@ struct ConnectionHealthView: View {
                         .foregroundStyle(color)
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(title)
-                        Text(value)
+                        Text(verbatim: l10n.text(title))
+                        Text(verbatim: l10n.text(value))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -260,15 +302,15 @@ struct ConnectionHealthView: View {
                     Image(systemName: symbol)
                         .foregroundStyle(color)
                         .frame(width: 22)
-                    Text(title)
+                    Text(verbatim: l10n.text(title))
                     Spacer()
-                    Text(value)
+                    Text(verbatim: l10n.text(value))
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(value)")
+        .accessibilityLabel(Text(verbatim: l10n.format("%@, %@", l10n.text(title), l10n.text(value))))
     }
 
     @MainActor
@@ -285,35 +327,41 @@ struct ConnectionHealthView: View {
     }
 
     private var diagnosticsText: String {
-        let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
-        let checked = diagnostics.lastChecked?.formatted(date: .numeric, time: .standard) ?? "Not run"
-
-        return """
-        Roam Control Diagnostics
-        Generated: \(Date().formatted(date: .numeric, time: .standard))
-        App: \(appVersion) (\(build))
-        iOS: \(UIDevice.current.systemVersion)
-        Pairing: \(pairingValue)
-        LocalDevVPN: \(localDevVPNValue)
-        Session: \(sessionValue)
-        Active place: \(activeTarget?.name ?? "None")
-        Coordinates: \(coordinatesValue)
-        Last connection check: \(checked)
-        Connection check result: \(diagnosticResultText)
-        Appearance: \(appModel.appearance.title)
-        Map style: \(appModel.mapDisplayStyle.title)
-        """
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        let dateStyle = Date.FormatStyle(date: .numeric, time: .standard, locale: l10n.locale)
+        let checked = diagnostics.lastChecked?.formatted(dateStyle) ?? l10n.text("Not run")
+        let location = includesLocation
+            ? "\((appModel.activeDisplayTarget ?? activeTarget).map(l10n.name) ?? l10n.text("None")) — \(renderedCoordinates)"
+            : l10n.text("Excluded")
+        let rows: [(String, String)] = [
+            ("Generated", Date().formatted(dateStyle)),
+            ("App", l10n.technical("\(version ?? l10n.text("Unknown")) (\(build ?? l10n.text("Unknown")))")),
+            ("iOS", l10n.technical(UIDevice.current.systemVersion)),
+            ("Pairing", l10n.text(pairingValue)),
+            ("LocalDevVPN", l10n.text(localDevVPNValue)),
+            ("Session", l10n.text(sessionValue)),
+            ("Execution", l10n.text(executionValue)),
+            ("Restoration", l10n.text(restorationValue)),
+            ("Location", location),
+            ("Last connection check", checked),
+            ("Connection check result", diagnosticResultText),
+            ("Appearance", l10n.text(appModel.appearance.title)),
+            ("Map Style", l10n.text(appModel.mapDisplayStyle.title))
+        ]
+        return ([l10n.text("Roam Control Diagnostics")] + rows.map { "\(l10n.text($0.0)): \($0.1)" })
+            .joined(separator: "\n")
     }
 
     private var diagnosticResultText: String {
         switch diagnostics.state {
-        case .notRun: "Not run"
-        case .running: "Running"
-        case .passed(let message): "Passed — \(message)"
-        case .failed(let message): "Failed — \(message)"
+        case .notRun: l10n.text("Not run")
+        case .running: l10n.text("Running")
+        case .passed(let message): l10n.format("Passed — %@", l10n.text(message))
+        case .failed(let message): l10n.format("Failed — %@", l10n.text(message))
         }
     }
+
 }
 
 #Preview {

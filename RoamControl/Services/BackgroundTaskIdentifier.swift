@@ -1,25 +1,21 @@
 import Foundation
 
+enum SessionExecutionMode: Equatable {
+    case inactive
+    case waitingForSystem
+    case background
+    case foregroundOnly
+}
+
 enum BackgroundTaskIdentifier {
-    static func prefix(for component: String) -> String {
-        let wildcardSuffix = ".\(component).*"
-        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.sean.roamcontrol"
+    static let appIdentifier = "com.ppanphper.roamcontrol"
+    static let callbackScheme = "roamcontrol-pandy"
 
-        if let permittedIdentifiers = Bundle.main.object(
-            forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers"
-        ) as? [String] {
-            let matchingIdentifier = permittedIdentifiers.first(where: {
-                $0.hasPrefix("\(bundleIdentifier).") && $0.hasSuffix(wildcardSuffix)
-            })
-            let fallbackIdentifier = permittedIdentifiers.first(where: {
-                $0.hasSuffix(wildcardSuffix)
-            })
-
-            if let wildcardIdentifier = matchingIdentifier ?? fallbackIdentifier {
-                return String(wildcardIdentifier.dropLast(2))
-            }
-        }
-
-        return "\(bundleIdentifier).\(component)"
+    static func prefix(for component: String) -> String? {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? appIdentifier
+        let knownIdentifiers = ["\(bundleIdentifier).\(component).*", "\(appIdentifier).\(component).*"]
+        let permitted = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String] ?? []
+        guard let identifier = knownIdentifiers.first(where: permitted.contains) else { return nil }
+        return String(identifier.dropLast(2))
     }
 }

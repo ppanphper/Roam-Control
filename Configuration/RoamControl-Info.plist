@@ -6,13 +6,26 @@
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).pairing.*</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).location.*</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).$(DEVELOPMENT_TEAM).pairing.*</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).$(DEVELOPMENT_TEAM).location.*</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Roam Control</string>
+	<string>Roam Control Dev</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>GPX Track</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.topografix.gpx</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -31,10 +44,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.roamcontrol.callback</string>
+			<string>com.ppanphper.roamcontrol.callback</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>roamcontrol</string>
+				<string>roamcontrol-pandy</string>
 			</array>
 		</dict>
 	</array>
@@ -61,6 +74,34 @@
 	<string>$(ROAMCONTROL_TELEMETRY_APP_ID)</string>
 	<key>RoamControlTelemetryNamespace</key>
 	<string>$(ROAMCONTROL_TELEMETRY_NAMESPACE)</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.topografix.gpx</string>
+			<key>UTTypeDescription</key>
+			<string>GPS Exchange Format</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.xml</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>gpx</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/gpx+xml</string>
+			</dict>
+		</dict>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

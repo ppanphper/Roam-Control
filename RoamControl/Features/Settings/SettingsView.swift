@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.appLocalization) private var l10n
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isShowingDeviceSetup = false
@@ -28,6 +29,41 @@ struct SettingsView: View {
                         mapStylePicker
                     }
                     .padding(.vertical, 4)
+                }
+
+                Section("Language") {
+                    NavigationLink {
+                        LanguagePickerView()
+                    } label: {
+                        Label {
+                            HStack {
+                                Text("Language")
+                                Spacer()
+                                let code = appModel.featurePreferences.languageCode
+                                if code == "system" {
+                                    Text("System Default").foregroundStyle(.secondary)
+                                } else {
+                                    Text(verbatim: LanguagePickerView.nativeName(for: code)).foregroundStyle(.secondary)
+                                }
+                            }
+                        } icon: { Image(systemName: "globe") }
+                    }
+                }
+
+                Section("Movement") {
+                    NavigationLink {
+                        MovementPreferencesView()
+                    } label: {
+                        Label("Movement & Coordinates", systemImage: "speedometer")
+                    }
+                }
+
+                Section("Data") {
+                    NavigationLink {
+                        BackupRestoreView()
+                    } label: {
+                        Label("Backup & Restore", systemImage: "externaldrive")
+                    }
                 }
 
                 Section("Device") {
@@ -69,13 +105,18 @@ struct SettingsView: View {
 
                 Section("About") {
                     NavigationLink {
+                        UpdatesView()
+                    } label: {
+                        Label("Updates", systemImage: "arrow.down.circle")
+                    }
+                    NavigationLink {
                         AboutRoamControlView()
                     } label: {
                         Label("About Roam Control", systemImage: "info.circle")
                     }
 
-                    LabeledContent("Version", value: versionText)
-                    LabeledContent("Build", value: buildNumberText)
+                    LabeledContent("Version", value: l10n.technical(versionText))
+                    LabeledContent("Build", value: l10n.technical(buildNumberText))
                     LabeledContent("Built", value: buildDateText)
 
                     Button {
@@ -94,7 +135,9 @@ struct SettingsView: View {
                     Text("This clears the pairing record and local app settings, then shows onboarding again. It does not remove or change LocalDevVPN.")
                 }
             }
-            .navigationTitle("Settings")
+            .background { LocalizedNavigationDirection(direction: l10n.layoutDirection).frame(width: 0, height: 0) }
+            .environment(\.layoutDirection, l10n.layoutDirection)
+            .navigationTitle(Text(verbatim: l10n.text("Settings")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -102,6 +145,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .environment(\.layoutDirection, l10n.layoutDirection)
         .preferredColorScheme(preferredColorScheme)
         .sheet(isPresented: $isShowingDeviceSetup) {
             PairingSetupView()
@@ -127,7 +171,7 @@ struct SettingsView: View {
                 resetError = nil
             }
         } message: {
-            Text(resetError ?? "Please try again.")
+            Text(verbatim: l10n.text(resetError ?? "Please try again."))
         }
     }
 
@@ -161,7 +205,7 @@ struct SettingsView: View {
         if dynamicTypeSize.isAccessibilitySize {
             Picker("Theme", selection: appearanceBinding) {
                 ForEach(AppAppearance.allCases) { appearance in
-                    Label(appearance.title, systemImage: appearance.systemImage)
+                    Label(LocalizedStringKey(appearance.title), systemImage: appearance.systemImage)
                         .tag(appearance)
                 }
             }
@@ -169,7 +213,7 @@ struct SettingsView: View {
         } else {
             Picker("Theme", selection: appearanceBinding) {
                 ForEach(AppAppearance.allCases) { appearance in
-                    Label(appearance.title, systemImage: appearance.systemImage)
+                    Label(LocalizedStringKey(appearance.title), systemImage: appearance.systemImage)
                         .tag(appearance)
                 }
             }
@@ -183,14 +227,14 @@ struct SettingsView: View {
         if dynamicTypeSize.isAccessibilitySize {
             Picker("Map Style", selection: mapStyleBinding) {
                 ForEach(MapDisplayStyle.allCases) { style in
-                    Text(style.title).tag(style)
+                    Text(LocalizedStringKey(style.title)).tag(style)
                 }
             }
             .pickerStyle(.menu)
         } else {
             Picker("Map Style", selection: mapStyleBinding) {
                 ForEach(MapDisplayStyle.allCases) { style in
-                    Text(style.title).tag(style)
+                    Text(LocalizedStringKey(style.title)).tag(style)
                 }
             }
             .pickerStyle(.segmented)
@@ -203,7 +247,7 @@ struct SettingsView: View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 3) {
                 Text("Pairing & Connection")
-                Text(connectionLabel)
+                Text(verbatim: l10n.text(connectionLabel))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -212,7 +256,7 @@ struct SettingsView: View {
             HStack {
                 Text("Pairing & Connection")
                 Spacer()
-                Text(connectionLabel)
+                Text(verbatim: l10n.text(connectionLabel))
                     .foregroundStyle(.secondary)
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
@@ -242,7 +286,7 @@ struct SettingsView: View {
 
     private var buildNumberText: String {
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        return build ?? "Unknown"
+        return build ?? l10n.text("Unknown")
     }
 
     private var buildDateText: String {
@@ -252,16 +296,16 @@ struct SettingsView: View {
             ) as? String,
             let buildDate = ISO8601DateFormatter().date(from: timestamp)
         {
-            return buildDate.formatted(date: .abbreviated, time: .shortened)
+            return buildDate.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().locale(l10n.locale))
         }
 
         guard
             let executableURL = Bundle.main.executableURL,
             let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
             let buildDate = values.contentModificationDate
-        else { return "Unknown" }
+        else { return l10n.text("Unknown") }
 
-        return buildDate.formatted(date: .abbreviated, time: .shortened)
+        return buildDate.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().locale(l10n.locale))
     }
 
     private var isShowingResetError: Binding<Bool> {

@@ -1,0 +1,35 @@
+{
+  "requested_model": "opus",
+  "cli_version": "2.1.303",
+  "node_version": "24.22.1",
+  "source_sha256": "97c382dbc90e3fd04f3c34b9e6b34e397125147d84e01a4f3d8211021b3cb677",
+  "read_only_tools": [
+    "Read",
+    "Glob",
+    "Grep"
+  ],
+  "physical_device_operations": false,
+  "audits": {
+    "feature": {
+      "model": "claude-opus-5-5",
+      "session_id": "dc14c9ed-eb01-45ae-8301-03728b760ef6",
+      "prompt_sha256": "2b772b03a4b04f277fa27ee119f82bc398e9087f29066a464c54354ef58d8017",
+      "complete": true,
+      "report_sha256": "a8b3688b9c61a29b249281a6b6f3c43bfcdb0c1820456ec56af645e40acc8284",
+      "is_error": false,
+      "permission_denials": [],
+      "num_turns": 57
+    },
+    "runtime": {
+      "model": "claude-opus-5-5",
+      "session_id": "cdcd4a0f-b34f-43f3-befd-facd9b231742",
+      "prompt_sha256": "5c57106781af7751115bd6dbb36276b13525eb3615a9e4672945e89c8dce6b0b",
+      "complete": true,
+      "report_sha256": "492a2a5427f44b44bcd6a455672e7b616d370a27ed833e1a090ce77308f4c849",
+      "is_error": false,
+      "permission_denials": [],
+      "num_turns": 36
+    }
+  },
+  "source_unchanged_during_review": true
+}

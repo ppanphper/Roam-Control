@@ -1,6 +1,14 @@
 # Roam Control 开发交接
 
-更新时间：2026-11-18，America/Los_Angeles。此处是从 wloc 安装排障会话迁入的开发上下文。**下一步是核对当前 fork 与参考版本的功能差距，尚未开始实现新功能。**
+更新时间：2026-11-18，America/Los_Angeles。原安装排障上下文保留在下文。**用户随后已授权完整功能对齐，并指定 gpt-6.2-sol 并发编码；当前应先读[实际实施与验证状态](../../docs/version-alignment/implementation-status.md)和[构建与手机验收](../../docs/version-alignment/build-and-device-validation.md)，不要再停留在范围选择阶段。**
+
+开发使用同级独立工作区 `Roam-Control-version-alignment-20261118`、分支 `codex/version-alignment-20261118`，起始基准 `main@402ff6f`。用户随后已授权提交PR、合并和清理：目标仅为用户fork `ppanphper/Roam-Control:main`，不向上游提PR。手机仍由用户验收。合并后按task-done同步主工作区并清理任务资源；先核对实际Git/PR状态，不假定开发工作区仍存在。本页下方“尚未实现/未验证”描述的是迁入时快照，当前结果以上述交付记录为准。
+
+## 当前审计交付
+
+用户追加要求由Claude Code审计功能保留和启动/运行可靠性，已完成四轮六份原文报告。首轮“部分达成”发现均已修复；最后恢复记录P3由第四轮关闭。先读[审计整改结论](../../docs/version-alignment/claude-audit/resolution.md)和[最终验证](../../docs/version-alignment/claude-audit/validation.json)。
+
+审计阶段交付为 `outputs/Roam-Control-0.9.9-Build31-2026-11-18_22-10-38.ipa`，SHA-256 `6efb93239fc96f6ca64375c35e2220471f10a25f90f77759db064710c0752eee`。`outputs/delivery.json`为唯一当前索引；旧候选不再交付。清理后的IPA、截图及审计文档保存在同级 `Roam-Control-artifacts/version-alignment-20261118/`，原始ignored文件由task-done完整备份；实际合并和清理结果记在该目录的closeout记录。源码与本地检查已完成，实机功能仍待用户按A01–A09验收；不能说实机已完整对齐或保证绝无错误。
 
 ## 必须先知道
 

@@ -38,14 +38,25 @@ typedef struct {
 
 typedef void (*RCLocationStartedCallback)(void *context);
 
+/* A cancelled connection may end before any simulated coordinate is sent. */
+typedef enum {
+    RC_LOCATION_CLEAR_NOT_NEEDED = 0,
+    RC_LOCATION_CLEAR_CONFIRMED = 1,
+    RC_LOCATION_CLEAR_UNCONFIRMED = 2
+} RCLocationClearStatus;
+
 typedef struct {
     char *error_message;
+    RCLocationClearStatus clear_status;
+    /* True for transient transport failure; clear_status still tracks restoration. */
+    int32_t retryable;
 } RCLocationResult;
 
 RCRemotePairingSession *rc_remote_pairing_session_create(void);
 
 void rc_remote_pairing_session_cancel(RCRemotePairingSession *session);
 
+/* Return codes: 0 success, 1 failure, 2 invalid arguments, 3 expired. */
 int32_t rc_remote_pairing_session_run(
     RCRemotePairingSession *session,
     const char *host_name,
@@ -82,11 +93,13 @@ int32_t rc_location_session_run(
     const uint8_t *pairing_record,
     size_t pairing_record_length,
     const char *peer_address,
+    uint32_t tunnel_interface_index,
     uint16_t remote_pairing_port,
     const char *service_identifier,
     const char *auth_tag,
     double latitude,
     double longitude,
+    int32_t clear_only,
     RCLocationStartedCallback started_callback,
     void *context,
     RCLocationResult *result

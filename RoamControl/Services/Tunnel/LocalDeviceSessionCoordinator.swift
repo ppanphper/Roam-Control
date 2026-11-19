@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Darwin
 import Foundation
 import Network
 import Observation
@@ -13,6 +14,15 @@ enum DeviceSessionPhase: Equatable {
     case active(LocationTarget)
     case stopping
     case failed(String)
+}
+
+enum DeviceRestorationStatus: Equatable {
+    case notRequired
+    case pending
+    case clearing
+    case deviceConfirmed
+    case userConfirmed
+    case requiresRecovery(String)
 }
 
 enum MobileDataGuidance: Equatable {
@@ -33,36 +43,42 @@ final class LocalDeviceSessionCoordinator: NSObject {
     private struct PendingSession {
         let pairingRecord: Data
         let target: LocationTarget
+        let clearOnly: Bool
     }
 
     private struct RemotePairingService: Sendable {
         let port: UInt16
         let identifier: String
         let authTag: String
+        let interfaceIndex: UInt32
     }
 
-    private static var taskIdentifierPrefix: String {
-        BackgroundTaskIdentifier.prefix(for: "location")
-    }
-
-    private static let localDevVPNPeerAddress = "10.7.0.1"
-    private static let enableURL = URL(string: "localdevvpn://enable?scheme=roamcontrol")!
+    private static let enableURL = URL(
+        string: "localdevvpn://enable?scheme=\(BackgroundTaskIdentifier.callbackScheme)"
+    )!
 
     private(set) var phase: DeviceSessionPhase = .idle {
         didSet { onPhaseChange?(phase) }
     }
     private(set) var mobileDataGuidance: MobileDataGuidance?
+    private(set) var executionMode: SessionExecutionMode = .inactive
+    private(set) var restorationStatus: DeviceRestorationStatus = .notRequired
+    /// Once a worker finishes, reports whether this attempt could have sent a coordinate.
+    var didAttemptLocationWrite: Bool { writeEvidence.didAttemptWrite }
+    private var writeEvidence = LocationSessionWriteEvidence()
 
     var onPhaseChange: ((DeviceSessionPhase) -> Void)?
+    /// Called synchronously on the main actor before exposing a new coordinate to the worker.
+    var onLocationWriteWillBegin: (() -> Void)?
 
-    private let browser = NetServiceBrowser()
+    private var browser: NetServiceBrowser?
     private let wifiPathMonitor = NWPathMonitor(requiredInterfaceType: .wifi)
     private let wifiPathMonitorQueue = DispatchQueue(
-        label: "com.sean.roamcontrol.wifi-path",
+        label: "com.ppanphper.roamcontrol.wifi-path",
         qos: .utility
     )
     private let serviceProbeQueue = DispatchQueue(
-        label: "com.sean.roamcontrol.service-probe",
+        label: "com.ppanphper.roamcontrol.service-probe",
         qos: .userInitiated
     )
     private var discoveredServices: [NetService] = []
@@ -72,12 +88,25 @@ final class LocalDeviceSessionCoordinator: NSObject {
     private var mobileDataDiscoveryLoopTask: Task<Void, Never>?
     private var mobileDataGuidanceDelay: Task<Void, Never>?
     private var localDevVPNProbeTask: Task<Void, Never>?
-    private var localDevVPNReturnTimeout: Task<Void, Never>?
+    private var localDevVPNReturn = LocalDevVPNReturnGate()
     private var pendingSession: PendingSession?
+    private var attemptIdentifier: UUID?
+    private var retries = ConsecutiveLocationRetries()
+    private var foregroundRevision = 0
+    private var clearRequestedFromStop = false
+    private var reconnectTask: Task<Void, Never>?
+    private var reconnectDeadline: Task<Void, Never>?
+    private var backgroundLaunchTimeout: Task<Void, Never>?
+    private var mobileDataDeadline: Task<Void, Never>?
+    private var hasUnconfirmedLocation: Bool {
+        if case .requiresRecovery = restorationStatus { return true }
+        return restorationStatus == .pending || restorationStatus == .clearing
+    }
     private var resolvedService: RemotePairingService?
     private var sawNonMatchingService = false
     private var isDiscoveringServices = false
     private var hasRequestedLocalDevVPNThisAttempt = false
+    private var isReconnectingActiveLocation = false
     private var wifiPathStatusIsKnown = false
     private var isWiFiPathSatisfied = false
     private var isMobileDataStartupMode = false
@@ -91,15 +120,12 @@ final class LocalDeviceSessionCoordinator: NSObject {
     private var submittedTaskIdentifier: String?
     private var backgroundTask: BGContinuedProcessingTask?
     private var backgroundProgressTask: Task<Void, Never>?
-    private var backgroundTaskFinished = true
     private var workerIsRunning = false
     private var cancellationRequested = false
     private var pendingFailureMessage: String?
 
     override init() {
         super.init()
-        browser.delegate = self
-        browser.includesPeerToPeer = true
         wifiPathMonitor.pathUpdateHandler = { [weak self] path in
             let isSatisfied = path.status == .satisfied
             Task { @MainActor [weak self] in
@@ -108,6 +134,14 @@ final class LocalDeviceSessionCoordinator: NSObject {
             }
         }
         wifiPathMonitor.start(queue: wifiPathMonitorQueue)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillResignActive),
+            name: UIApplication.willResignActiveNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification, object: nil
+        )
     }
 
     var isBusy: Bool {
@@ -120,17 +154,33 @@ final class LocalDeviceSessionCoordinator: NSObject {
     }
 
     func start(pairingRecord: Data, target: LocationTarget) {
+        beginAttempt(pairingRecord: pairingRecord, target: target, clearOnly: false)
+    }
+
+    func restore(pairingRecord: Data, target: LocationTarget) {
+        beginAttempt(pairingRecord: pairingRecord, target: target, clearOnly: true)
+    }
+
+    private func beginAttempt(pairingRecord: Data, target: LocationTarget, clearOnly: Bool) {
         guard !workerIsRunning, !isBusy else { return }
+        writeEvidence = LocationSessionWriteEvidence()
 
 #if targetEnvironment(simulator)
-        phase = .failed("A real iPhone is required to start a location session.")
+        fail("A real iPhone is required to start a location session.")
 #else
         cancellationRequested = false
         pendingFailureMessage = nil
         mobileDataGuidance = nil
         hasRequestedLocalDevVPNThisAttempt = false
         isMobileDataStartupMode = false
-        pendingSession = PendingSession(pairingRecord: pairingRecord, target: target)
+        retries = ConsecutiveLocationRetries()
+        attemptIdentifier = UUID()
+        pendingSession = PendingSession(pairingRecord: pairingRecord, target: target, clearOnly: clearOnly)
+        if clearOnly {
+            restorationStatus = .pending
+        } else if !hasUnconfirmedLocation {
+            restorationStatus = .notRequired
+        }
         resolvedService = nil
         phase = .discovering
         routeStartupForCurrentNetwork()
@@ -138,17 +188,20 @@ final class LocalDeviceSessionCoordinator: NSObject {
     }
 
     func handleOpenURL(_ url: URL) {
-        guard url.scheme?.lowercased() == "roamcontrol" else { return }
-        guard pendingSession != nil else { return }
-        guard phase == .openingLocalDevVPN || phase == .discovering else { return }
+        guard url.scheme?.lowercased() == BackgroundTaskIdentifier.callbackScheme,
+              pendingSession != nil, phase == .openingLocalDevVPN else { return }
+        automaticDiscoveryTask?.cancel()
+        automaticDiscoveryTask = nil
 
-        localDevVPNReturnTimeout?.cancel()
-        localDevVPNReturnTimeout = nil
-        guard mobileDataGuidance != .turnOff else { return }
-        if isMobileDataStartupMode {
-            enterMobileDataGuidance()
-        } else {
-            beginDiscovery(showConnectionHelpIfUnavailable: true)
+        guard let launch = localDevVPNReturn.launch else { return }
+        discoverAfterLocalDevVPNReturn(launch)
+    }
+
+    private func discoverAfterLocalDevVPNReturn(_ launch: UUID) {
+        switch localDevVPNReturn.beginDiscovery(for: launch, usesMobileData: isMobileDataStartupMode) {
+        case .mobileData: enterMobileDataGuidance()
+        case .standard: beginDiscovery(showConnectionHelpIfUnavailable: true)
+        case nil: break
         }
     }
 
@@ -161,6 +214,11 @@ final class LocalDeviceSessionCoordinator: NSObject {
             let pendingSession
         else { return .unavailable }
 
+        if target.latitude != pendingSession.target.latitude || target.longitude != pendingSession.target.longitude {
+            onLocationWriteWillBegin?()
+            // An observer may have stopped the session before the update was queued.
+            guard case .active = phase, self.activeSession == activeSession else { return .unavailable }
+        }
         guard rc_location_session_update(activeSession, target.latitude, target.longitude) == 0 else {
             fail("Roam Control could not update the active location.")
             return .failed
@@ -168,7 +226,8 @@ final class LocalDeviceSessionCoordinator: NSObject {
 
         self.pendingSession = PendingSession(
             pairingRecord: pendingSession.pairingRecord,
-            target: target
+            target: target,
+            clearOnly: pendingSession.clearOnly
         )
         phase = .active(target)
         backgroundTask?.updateTitle(
@@ -185,10 +244,12 @@ final class LocalDeviceSessionCoordinator: NSObject {
             return
         }
 
+        let phaseWhenOpened = phase
         UIApplication.shared.open(Self.enableURL) { [weak self] opened in
             guard !opened else { return }
             Task { @MainActor in
-                self?.fail("Install LocalDevVPN before starting a location session.")
+                guard let self, self.phase == phaseWhenOpened, self.pendingSession == nil else { return }
+                self.fail("Install LocalDevVPN before starting a location session.")
             }
         }
 #endif
@@ -224,69 +285,95 @@ final class LocalDeviceSessionCoordinator: NSObject {
         beginDiscovery(showConnectionHelpIfUnavailable: true)
     }
 
-    func appDidBecomeActive() {
+    @objc private func appWillResignActive() {
+        foregroundRevision &+= 1
+        automaticDiscoveryTask?.cancel()
+        automaticDiscoveryTask = nil
+        if mobileDataGuidance == .turnOff {
+            mobileDataDeadline?.cancel()
+            mobileDataDeadline = nil
+        }
+    }
+
+    @objc func appDidBecomeActive() {
         if
             phase == .openingLocalDevVPN,
             pendingSession != nil,
-            !workerIsRunning
+            !workerIsRunning,
+            let launch = localDevVPNReturn.launch
         {
-            automaticDiscoveryTask?.cancel()
+            guard automaticDiscoveryTask == nil else { return }
             automaticDiscoveryTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(900))
-                guard
-                    !Task.isCancelled,
-                    let self,
-                    self.pendingSession != nil,
-                    self.phase == .openingLocalDevVPN,
-                    !self.workerIsRunning
-                else { return }
-
+                guard !Task.isCancelled, let self else { return }
                 self.automaticDiscoveryTask = nil
-                if self.isMobileDataStartupMode {
-                    self.enterMobileDataGuidance()
-                } else {
-                    self.beginDiscovery(showConnectionHelpIfUnavailable: true)
-                }
+                guard self.pendingSession != nil, self.phase == .openingLocalDevVPN,
+                      !self.workerIsRunning, UIApplication.shared.applicationState == .active else { return }
+                self.discoverAfterLocalDevVPNReturn(launch)
             }
             return
         }
 
         guard mobileDataGuidance == .turnOff else { return }
+        armMobileDataDeadlineIfActive()
         startMobileDataDiscoveryLoop()
     }
 
     func stop() {
         mobileDataGuidance = nil
         switch phase {
-        case .idle:
+        case .idle, .failed, .stopping:
             return
-        case .openingLocalDevVPN, .discovering:
+        case .openingLocalDevVPN, .discovering, .connecting, .active:
+            reconnectDeadline?.cancel()
+            reconnectDeadline = nil
             cancellationRequested = true
-            cleanupDiscovery()
-            clearPendingSession()
-            phase = .idle
-        case .connecting, .active:
-            cancellationRequested = true
-            phase = .stopping
             if let activeSession {
+                if hasUnconfirmedLocation {
+                    restorationStatus = .clearing
+                }
+                phase = .stopping
                 rc_location_session_cancel(activeSession)
-            } else if let submittedTaskIdentifier {
-                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: submittedTaskIdentifier)
-                clearPendingSession()
-                phase = .idle
+            } else if hasUnconfirmedLocation, let pendingSession, !pendingSession.clearOnly {
+                beginStopRecovery(pendingSession)
+            } else {
+                finishWithoutNativeWrite()
             }
-        case .stopping:
-            break
-        case .failed:
-            clearPendingSession()
-            phase = .idle
         }
     }
 
     func reset() {
         stop()
-        if !workerIsRunning {
-            clearPendingSession()
+        // Forgetting setup must not turn a failed clear into an apparent recovery.
+        if !workerIsRunning, !hasUnconfirmedLocation, phase != .idle {
+            finishWithoutNativeWrite()
+        }
+    }
+
+    var canAcknowledgeManualRestoration: Bool {
+        guard !workerIsRunning, !isBusy else { return false }
+        if case .active = phase { return false }
+        return true
+    }
+
+    /// The user checked their real position outside this app. This is not a device clear receipt.
+    func acknowledgeManualRestoration() {
+        guard canAcknowledgeManualRestoration else { return }
+        clearPendingSession()
+        restorationStatus = .userConfirmed
+        phase = .idle
+    }
+
+    private func finishWithoutNativeWrite() {
+        let requiresRecovery = hasUnconfirmedLocation
+        finishBackgroundTask(success: false)
+        clearPendingSession()
+        cancellationRequested = false
+        if requiresRecovery {
+            let message = "Real location has not been restored. Reconnect and try again."
+            restorationStatus = .requiresRecovery(message)
+            phase = .failed(message)
+        } else {
             phase = .idle
         }
     }
@@ -300,6 +387,9 @@ final class LocalDeviceSessionCoordinator: NSObject {
         sawNonMatchingService = false
         isDiscoveringServices = true
         phase = .discovering
+        let browser = NetServiceBrowser()
+        self.browser = browser
+        browser.includesPeerToPeer = true
         browser.delegate = self
         browser.searchForServices(ofType: "_remotepairing._tcp.", inDomain: "local.")
 
@@ -336,15 +426,14 @@ final class LocalDeviceSessionCoordinator: NSObject {
         }
 
         if reportTimeout {
-            discoveryTimeout = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                guard let self, self.phase == .discovering else { return }
-                if self.sawNonMatchingService {
-                    self.fail(
+            discoveryTimeout = foregroundDeadline(after: .seconds(30)) { coordinator in
+                guard coordinator.phase == .discovering else { return }
+                if coordinator.sawNonMatchingService {
+                    coordinator.fail(
                         "Roam Control found an outdated device announcement. Toggle LocalDevVPN off and on, then try again."
                     )
                 } else {
-                    self.fail(
+                    coordinator.fail(
                         "Roam Control could not find this iPhone through LocalDevVPN. Check that the tunnel is enabled and try again."
                     )
                 }
@@ -361,7 +450,7 @@ final class LocalDeviceSessionCoordinator: NSObject {
     }
 
     private func useResolvedService(_ service: NetService) {
-        guard phase == .discovering else { return }
+        guard phase == .discovering, discoveredServices.contains(where: { $0 === service }) else { return }
         guard service.port > 0, service.port <= Int(UInt16.max) else { return }
         guard
             let txtData = service.txtRecordData(),
@@ -400,21 +489,26 @@ final class LocalDeviceSessionCoordinator: NSObject {
         }
 
         guard serviceProbeConnection == nil, serviceProbeRetryTask == nil else { return }
-        verifyServiceIsReachable(RemotePairingService(
-            port: UInt16(service.port),
-            identifier: identifier,
-            authTag: authTag
-        ))
+        verifyServiceIsReachable(port: UInt16(service.port), identifier: identifier, authTag: authTag)
     }
 
     private func submitLocationTask() {
+        if backgroundTask != nil {
+            phase = .connecting
+            runNativeLocationSession()
+            return
+        }
         guard let pendingSession, resolvedService != nil else {
             fail("Roam Control could not prepare the selected location.")
             return
         }
 
         phase = .connecting
-        let identifier = "\(Self.taskIdentifierPrefix).\(UUID().uuidString)"
+        guard let prefix = BackgroundTaskIdentifier.prefix(for: "location") else {
+            beginForegroundLocation()
+            return
+        }
+        let identifier = "\(prefix).\(UUID().uuidString)"
         let wasRegistered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: identifier,
             using: .main
@@ -429,59 +523,63 @@ final class LocalDeviceSessionCoordinator: NSObject {
                     task.setTaskCompleted(success: false)
                     return
                 }
-                self.beginLocationSession(with: task)
+                self.beginLocationSession(with: task, identifier: identifier)
             }
         }
 
         guard wasRegistered else {
-            fail("iOS could not prepare the location session. Close Roam Control, reopen it, and try again.")
+            beginForegroundLocation()
             return
         }
 
         submittedTaskIdentifier = identifier
+        executionMode = .waitingForSystem
         let request = BGContinuedProcessingTaskRequest(
             identifier: identifier,
             title: "Roam Control",
-            subtitle: "Connecting to \(pendingSession.target.name)…"
+            subtitle: pendingSession.clearOnly ? "Restoring real location…" : "Connecting to \(pendingSession.target.name)…"
         )
         request.strategy = .fail
-
-        Task {
-            do {
-                try await BGTaskScheduler.shared.submitTaskRequest(request)
-            } catch {
-                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: identifier)
-                self.submittedTaskIdentifier = nil
-                self.resolvedService = nil
-                if self.isMobileDataStartupMode {
-                    self.enterMobileDataGuidance()
-                } else if self.hasRequestedLocalDevVPNThisAttempt {
-                    self.phase = .discovering
-                    self.mobileDataGuidance = .connectionHelp
-                } else {
-                    self.openLocalDevVPNForPendingSession()
-                }
-            }
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            beginForegroundLocation()
+            return
+        }
+        backgroundLaunchTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self, self.submittedTaskIdentifier == identifier,
+                  self.backgroundTask == nil else { return }
+            self.beginForegroundLocation()
         }
     }
 
-    private func beginLocationSession(with task: BGContinuedProcessingTask) {
-        guard phase == .connecting, !workerIsRunning else {
+    private func beginForegroundLocation() {
+        guard phase == .connecting, !workerIsRunning else { return }
+        finishBackgroundTask(success: false)
+        executionMode = .foregroundOnly
+        runNativeLocationSession()
+    }
+
+    private func beginLocationSession(with task: BGContinuedProcessingTask, identifier: String) {
+        guard submittedTaskIdentifier == identifier, phase == .connecting, !workerIsRunning else {
             task.setTaskCompleted(success: false)
             return
         }
 
+        backgroundLaunchTimeout?.cancel()
+        backgroundLaunchTimeout = nil
         backgroundTask = task
-        backgroundTaskFinished = false
+        executionMode = .background
         task.progress.totalUnitCount = 5_760
         task.progress.completedUnitCount = 1
         task.expirationHandler = { [weak self] in
             Task { @MainActor in
-                self?.locationTaskExpired()
+                guard let self, self.submittedTaskIdentifier == identifier else { return }
+                self.locationTaskExpired()
             }
         }
         startBackgroundProgress(for: task)
-
         runNativeLocationSession()
     }
 
@@ -493,8 +591,7 @@ final class LocalDeviceSessionCoordinator: NSObject {
                 guard
                     !Task.isCancelled,
                     let self,
-                    self.backgroundTask === task,
-                    !self.backgroundTaskFinished
+                    self.backgroundTask === task
                 else { return }
 
                 task.progress.completedUnitCount = min(
@@ -521,10 +618,18 @@ final class LocalDeviceSessionCoordinator: NSObject {
         workerIsRunning = true
 
         let sessionBits = UInt(bitPattern: session)
-        let contextBits = UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())
+        let callbackContext = LocationCallbackContext(coordinator: self, runIdentifier: runIdentifier)
+        let contextBits = UInt(bitPattern: Unmanaged.passRetained(callbackContext).toOpaque())
         let pairingRecord = pendingSession.pairingRecord
         let target = pendingSession.target
-        let peerAddressString = Self.localDevVPNPeerAddress
+        let clearOnly = pendingSession.clearOnly
+        if clearOnly {
+            restorationStatus = .clearing
+        } else if !didAttemptLocationWrite {
+            writeEvidence.beginWorker()
+            onLocationWriteWillBegin?()
+        }
+        let peerAddressString = LocalDevVPNEndpoint.peerAddress
 
         DispatchQueue.global(qos: .userInitiated).async {
             guard
@@ -546,11 +651,13 @@ final class LocalDeviceSessionCoordinator: NSObject {
                                 recordBaseAddress,
                                 pairingRecord.count,
                                 peerAddress,
+                                resolvedService.interfaceIndex,
                                 resolvedService.port,
                                 serviceIdentifier,
                                 authTag,
                                 target.latitude,
                                 target.longitude,
+                                clearOnly ? 1 : 0,
                                 locationStartedCallback,
                                 context,
                                 &result
@@ -567,16 +674,22 @@ final class LocalDeviceSessionCoordinator: NSObject {
                 if let session = OpaquePointer(bitPattern: sessionBits) {
                     rc_location_session_destroy(session)
                 }
-                let coordinator = Unmanaged<LocalDeviceSessionCoordinator>
-                    .fromOpaque(context)
-                    .takeRetainedValue()
-                coordinator.nativeLocationFinished(outcome, runIdentifier: runIdentifier)
+                guard let context = UnsafeMutableRawPointer(bitPattern: contextBits) else { return }
+                let callbackContext = Unmanaged<LocationCallbackContext>.fromOpaque(context).takeRetainedValue()
+                callbackContext.coordinator.nativeLocationFinished(outcome, runIdentifier: runIdentifier)
             }
         }
     }
 
-    fileprivate func nativeLocationStarted() {
-        guard workerIsRunning, !cancellationRequested, let target = pendingSession?.target else { return }
+    fileprivate func nativeLocationStarted(runIdentifier: UUID) {
+        guard activeRunIdentifier == runIdentifier, workerIsRunning, !cancellationRequested,
+              let target = pendingSession?.target else { return }
+        writeEvidence.startedLocation()
+        restorationStatus = .pending
+        retries.locationStarted()
+        isReconnectingActiveLocation = false
+        reconnectDeadline?.cancel()
+        reconnectDeadline = nil
         mobileDataDiscoveryLoopTask?.cancel()
         mobileDataDiscoveryLoopTask = nil
         phase = .active(target)
@@ -589,92 +702,138 @@ final class LocalDeviceSessionCoordinator: NSObject {
         )
     }
 
-    private func nativeLocationFinished(
-        _ outcome: NativeLocationOutcome,
-        runIdentifier: UUID
-    ) {
+    private func nativeLocationFinished(_ outcome: NativeLocationOutcome, runIdentifier: UUID) {
         guard activeRunIdentifier == runIdentifier else { return }
-
         activeRunIdentifier = nil
         activeSession = nil
         workerIsRunning = false
 
-        if let pendingFailureMessage {
-            self.pendingFailureMessage = nil
-            mobileDataGuidance = nil
-            clearPendingSession()
-            phase = .failed(pendingFailureMessage)
-            finishBackgroundTask(success: false)
-            return
-        }
+        let mayRequireRecovery = hasUnconfirmedLocation || pendingSession?.clearOnly == true
+        let confirm = outcome.clearStatus == .confirmed
+        // A fresh attempt can fail before writing while older coordinates still
+        // need clearing. A worker reconnecting this attempt retains its evidence.
+        writeEvidence.finishedWorker(clear: outcome.clearStatus, clearOnly: pendingSession?.clearOnly == true)
+        let unresolved = outcome.clearStatus == .unconfirmed || (mayRequireRecovery && !confirm)
+        let requestedStop = cancellationRequested
+        cancellationRequested = false
+        let forcedFailure = pendingFailureMessage
+        let failure = forcedFailure ?? outcome.error
+        pendingFailureMessage = nil
 
-        if cancellationRequested {
-            cancellationRequested = false
-            clearPendingSession()
-            phase = .idle
-            finishBackgroundTask(success: true)
-            return
-        }
-
-        switch outcome {
-        case .success:
-            mobileDataGuidance = nil
-            clearPendingSession()
-            phase = .idle
-            finishBackgroundTask(success: true)
-        case .failure(let message):
-            if isRecoverableTunnelConnectionFailure(message) {
-                resolvedService = nil
-                finishBackgroundTask(success: false)
-                if isMobileDataStartupMode {
-                    enterMobileDataGuidance()
-                } else if hasRequestedLocalDevVPNThisAttempt {
-                    phase = .discovering
-                    mobileDataGuidance = .connectionHelp
-                } else {
-                    openLocalDevVPNForPendingSession()
-                }
+        if let pendingSession {
+            switch LocationSessionRetryPolicy.action(
+                clear: outcome.clearStatus, unresolved: unresolved, retryable: outcome.retryable,
+                hasError: outcome.error != nil, wasCancelled: requestedStop, forcedFailure: forcedFailure,
+                currentAttemptIsClearOnly: pendingSession.clearOnly, retryCount: retries.count
+            ) {
+            case .clearOnly:
+                beginStopRecovery(pendingSession)
                 return
+            case .reconnect:
+                if unresolved {
+                    restorationStatus = pendingSession.clearOnly ? .clearing : .pending
+                } else if confirm {
+                    restorationStatus = .deviceConfirmed
+                }
+                retries.recordRetry()
+                if didAttemptLocationWrite && !pendingSession.clearOnly {
+                    isReconnectingActiveLocation = true
+                    if !isMobileDataStartupMode { armReconnectDeadline() }
+                }
+                scheduleReconnect()
+                return
+            case .finish:
+                break
             }
+        }
 
-            mobileDataGuidance = nil
-            clearPendingSession()
+        finishBackgroundTask(success: failure == nil && !unresolved)
+        mobileDataGuidance = confirm && pendingSession?.clearOnly == true && isMobileDataStartupMode ? .turnBackOn : nil
+        clearPendingSession()
+        if confirm {
+            restorationStatus = .deviceConfirmed
+        } else if unresolved {
+            restorationStatus = .requiresRecovery(failure ?? "The iPhone did not confirm that its simulated location was cleared.")
+        }
+
+        if let message = LocationSessionRetryPolicy.finishMessage(
+            error: failure, forcedFailure: forcedFailure, wasCancelled: requestedStop,
+            clear: outcome.clearStatus, unresolved: unresolved
+        ) {
             phase = .failed(message)
-            finishBackgroundTask(success: false)
+        } else {
+            phase = .idle
+        }
+    }
+
+    private func beginStopRecovery(_ session: PendingSession) {
+        // Fence the interrupted attempt so its late discovery cannot send a set.
+        let useMobileData = isMobileDataStartupMode
+        clearPendingSession()
+        attemptIdentifier = UUID()
+        pendingSession = PendingSession(pairingRecord: session.pairingRecord, target: session.target, clearOnly: true)
+        isMobileDataStartupMode = useMobileData
+        clearRequestedFromStop = true
+        restorationStatus = .clearing
+        cancellationRequested = false
+        retries = ConsecutiveLocationRetries()
+        scheduleReconnect()
+    }
+
+    private func scheduleReconnect() {
+        guard let attemptIdentifier else { return }
+        resolvedService = nil
+        reconnectTask?.cancel()
+        reconnectTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard !Task.isCancelled, let self, self.attemptIdentifier == attemptIdentifier,
+                  self.phase == .discovering, !self.workerIsRunning else { return }
+            self.reconnectTask = nil
+            if self.isMobileDataStartupMode {
+                self.enterMobileDataGuidance()
+            } else {
+                self.beginDiscovery(showConnectionHelpIfUnavailable: true)
+            }
+        }
+        phase = .discovering
+    }
+
+    private func armReconnectDeadline() {
+        guard reconnectDeadline == nil, let attemptIdentifier else { return }
+        reconnectDeadline = foregroundDeadline(after: .seconds(60)) { coordinator in
+            guard coordinator.attemptIdentifier == attemptIdentifier else { return }
+            coordinator.fail("Real location has not been restored. Reconnect and try again.")
         }
     }
 
     private func locationTaskExpired() {
-        cancellationRequested = true
-        pendingFailureMessage = nil
-        mobileDataGuidance = nil
-        phase = .stopping
-
-        if let activeSession {
-            rc_location_session_cancel(activeSession)
-        } else {
-            clearPendingSession()
-            phase = .idle
+        // If the user already asked to stop, scheduler expiry only ends the grant.
+        if !cancellationRequested, !clearRequestedFromStop, pendingFailureMessage == nil {
+            if activeSession != nil {
+                cancellationRequested = true
+            }
+            fail("iOS stopped the background session.")
         }
-
-        finishBackgroundTask(success: true)
+        // Expiration must be acknowledged immediately. Clear is reported separately by the engine.
+        finishBackgroundTask(success: false)
     }
 
     private func fail(_ message: String) {
-        localDevVPNReturnTimeout?.cancel()
-        localDevVPNReturnTimeout = nil
+        localDevVPNReturn.clear()
         mobileDataGuidance = nil
         cleanupDiscovery()
 
         if workerIsRunning, let activeSession {
             pendingFailureMessage = message
+            if hasUnconfirmedLocation { restorationStatus = .clearing }
+            phase = .stopping
             rc_location_session_cancel(activeSession)
-        } else {
-            clearPendingSession()
+            return
         }
-
-        phase = .failed(message)
         finishBackgroundTask(success: false)
+        clearPendingSession()
+        if hasUnconfirmedLocation { restorationStatus = .requiresRecovery(message) }
+        phase = .failed(message)
     }
 
     private func cleanupDiscovery() {
@@ -686,7 +845,9 @@ final class LocalDeviceSessionCoordinator: NSObject {
         mobileDataGuidanceDelay = nil
         localDevVPNProbeTask?.cancel()
         localDevVPNProbeTask = nil
-        browser.stop()
+        browser?.delegate = nil
+        browser?.stop()
+        browser = nil
 
         for service in discoveredServices {
             service.stopMonitoring()
@@ -697,23 +858,15 @@ final class LocalDeviceSessionCoordinator: NSObject {
         discoveredServices = []
     }
 
-    private func verifyServiceIsReachable(_ service: RemotePairingService) {
-        guard
-            phase == .discovering,
-            pendingSession != nil,
-            serviceProbeConnection == nil
-        else { return }
-        guard let port = NWEndpoint.Port(rawValue: service.port) else {
+    private func verifyServiceIsReachable(port: UInt16, identifier: String, authTag: String) {
+        guard phase == .discovering, pendingSession != nil, serviceProbeConnection == nil else { return }
+        let interfaceIndex = LocalDevVPNEndpoint.interfaceIndex() ?? 0
+        let service = RemotePairingService(port: port, identifier: identifier, authTag: authTag, interfaceIndex: interfaceIndex)
+        serviceProbeAttemptCount += 1
+        guard interfaceIndex != 0, let connection = LocalDevVPNEndpoint.makeProbe(port: port) else {
             handleServiceProbeResult(false, service: service)
             return
         }
-
-        serviceProbeAttemptCount += 1
-        let connection = NWConnection(
-            host: NWEndpoint.Host(Self.localDevVPNPeerAddress),
-            port: port,
-            using: .tcp
-        )
         serviceProbeConnection = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else { return }
@@ -766,6 +919,8 @@ final class LocalDeviceSessionCoordinator: NSObject {
             resolvedService = service
             mobileDataDiscoveryLoopTask?.cancel()
             mobileDataDiscoveryLoopTask = nil
+            mobileDataDeadline?.cancel()
+            mobileDataDeadline = nil
             if mobileDataGuidance == .connectionHelp {
                 mobileDataGuidance = nil
             }
@@ -779,7 +934,7 @@ final class LocalDeviceSessionCoordinator: NSObject {
             return
         }
 
-        if !hasRequestedLocalDevVPNThisAttempt {
+        if !hasRequestedLocalDevVPNThisAttempt && !isReconnectingActiveLocation && !clearRequestedFromStop {
             serviceProbeAttemptCount = 0
             openLocalDevVPNForPendingSession()
             return
@@ -796,7 +951,7 @@ final class LocalDeviceSessionCoordinator: NSObject {
             try? await Task.sleep(for: .milliseconds(650))
             guard !Task.isCancelled, let self else { return }
             self.serviceProbeRetryTask = nil
-            self.verifyServiceIsReachable(service)
+            self.verifyServiceIsReachable(port: service.port, identifier: service.identifier, authTag: service.authTag)
         }
     }
 
@@ -818,30 +973,37 @@ final class LocalDeviceSessionCoordinator: NSObject {
         networkDecisionTask = nil
         mobileDataDiscoveryLoopTask?.cancel()
         mobileDataDiscoveryLoopTask = nil
-        localDevVPNReturnTimeout?.cancel()
-        localDevVPNReturnTimeout = nil
+        localDevVPNReturn.clear()
         cleanupDiscovery()
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        reconnectDeadline?.cancel()
+        reconnectDeadline = nil
+        mobileDataDeadline?.cancel()
+        mobileDataDeadline = nil
         pendingSession = nil
         resolvedService = nil
-        submittedTaskIdentifier = nil
+        attemptIdentifier = nil
         hasRequestedLocalDevVPNThisAttempt = false
         isMobileDataStartupMode = false
+        isReconnectingActiveLocation = false
+        clearRequestedFromStop = false
     }
 
     private func finishBackgroundTask(success: Bool) {
-        guard !backgroundTaskFinished else { return }
-        backgroundTaskFinished = true
+        backgroundLaunchTimeout?.cancel()
+        backgroundLaunchTimeout = nil
         backgroundProgressTask?.cancel()
         backgroundProgressTask = nil
-        backgroundTask?.setTaskCompleted(success: success)
+        if let task = backgroundTask {
+            task.expirationHandler = nil
+            task.setTaskCompleted(success: success)
+        } else if let submittedTaskIdentifier {
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: submittedTaskIdentifier)
+        }
         backgroundTask = nil
         submittedTaskIdentifier = nil
-    }
-
-    private func isRecoverableTunnelConnectionFailure(_ message: String) -> Bool {
-        message.localizedCaseInsensitiveContains("through LocalDevVPN")
-            || message.localizedCaseInsensitiveContains("make the iPhone connection available")
-            || message.localizedCaseInsensitiveContains("open the secure device tunnel")
+        executionMode = .inactive
     }
 
     private func routeStartupForCurrentNetwork() {
@@ -883,7 +1045,44 @@ final class LocalDeviceSessionCoordinator: NSObject {
         cleanupDiscovery()
         phase = .discovering
         mobileDataGuidance = .turnOff
+        armMobileDataDeadlineIfActive()
         startMobileDataDiscoveryLoop()
+    }
+
+    private func armMobileDataDeadlineIfActive() {
+        guard mobileDataDeadline == nil, let attemptIdentifier,
+              UIApplication.shared.applicationState == .active else { return }
+        mobileDataDeadline = foregroundDeadline(after: .seconds(60)) { coordinator in
+            guard coordinator.attemptIdentifier == attemptIdentifier,
+                  coordinator.mobileDataGuidance == .turnOff, !coordinator.workerIsRunning else { return }
+            coordinator.mobileDataDeadline = nil
+            coordinator.fail("The tunnel did not become available after turning off mobile data. Reopen LocalDevVPN and try again.")
+        }
+    }
+
+    private func foregroundDeadline(
+        after duration: Duration, onTimeout: @escaping @MainActor (LocalDeviceSessionCoordinator) -> Void
+    ) -> Task<Void, Never> {
+        let clock = ContinuousClock()
+        var revision = foregroundRevision
+        var budget = ForegroundDiscoveryBudget(duration: duration, now: clock.now,
+                                               isActive: canSpendDiscoveryTime)
+        return Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await clock.sleep(for: .seconds(1))
+                guard !Task.isCancelled, let self else { return }
+                if budget.step(now: clock.now, isActive: self.canSpendDiscoveryTime,
+                               uninterrupted: revision == self.foregroundRevision) {
+                    onTimeout(self)
+                    return
+                }
+                revision = self.foregroundRevision
+            }
+        }
+    }
+
+    private var canSpendDiscoveryTime: Bool {
+        phase != .openingLocalDevVPN && UIApplication.shared.applicationState == .active
     }
 
     private func startMobileDataDiscoveryLoop() {
@@ -914,16 +1113,27 @@ final class LocalDeviceSessionCoordinator: NSObject {
 
     private func openLocalDevVPNForPendingSession() {
 #if !targetEnvironment(simulator)
-        guard pendingSession != nil, !workerIsRunning else { return }
+        guard pendingSession != nil, !workerIsRunning, let attemptIdentifier else { return }
         cleanupDiscovery()
+        automaticDiscoveryTask?.cancel()
+        automaticDiscoveryTask = nil
+        mobileDataDeadline?.cancel()
+        mobileDataDeadline = nil
         mobileDataGuidance = nil
         hasRequestedLocalDevVPNThisAttempt = true
         phase = .openingLocalDevVPN
 
+        // LocalDevVPN may need an arbitrary amount of time in Settings. The
+        // callback or a foreground return starts a fresh, bounded discovery.
+        let launchIdentifier = UUID()
+        localDevVPNReturn.open(launchIdentifier)
         UIApplication.shared.open(Self.enableURL) { [weak self] opened in
             guard !opened else { return }
             Task { @MainActor in
-                self?.fail("Install LocalDevVPN before starting a location session.")
+                guard let self, self.attemptIdentifier == attemptIdentifier,
+                      self.localDevVPNReturn.launch == launchIdentifier,
+                      self.phase == .openingLocalDevVPN else { return }
+                self.fail("Install LocalDevVPN before starting a location session.")
             }
         }
 #endif
@@ -938,6 +1148,7 @@ extension LocalDeviceSessionCoordinator: NetServiceBrowserDelegate, NetServiceDe
         moreComing: Bool
     ) {
         MainActor.assumeIsolated {
+            guard self.browser === browser, self.isDiscoveringServices else { return }
             resolve(service)
         }
     }
@@ -947,6 +1158,7 @@ extension LocalDeviceSessionCoordinator: NetServiceBrowserDelegate, NetServiceDe
         didNotSearch errorDict: [String: NSNumber]
     ) {
         MainActor.assumeIsolated {
+            guard self.browser === browser, self.isDiscoveringServices else { return }
             fail("Local Network access is required to find this iPhone.")
         }
     }
@@ -964,35 +1176,77 @@ extension LocalDeviceSessionCoordinator: NetServiceBrowserDelegate, NetServiceDe
     }
 }
 
-private enum NativeLocationOutcome: Sendable {
-    case success
-    case failure(String)
+enum LocalDevVPNEndpoint {
+    static let peerAddress = "10.7.0.1"
+    private static let sourceAddress = "10.7.1.1"
+
+    static func interfaceIndex() -> UInt32? {
+        var entries: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&entries) == 0, let entries else { return nil }
+        defer { freeifaddrs(entries) }
+        var cursor: UnsafeMutablePointer<ifaddrs>? = entries
+        var expected = in_addr()
+        guard inet_pton(AF_INET, sourceAddress, &expected) == 1 else { return nil }
+        while let entry = cursor {
+            let interface = entry.pointee
+            cursor = interface.ifa_next
+            guard let address = interface.ifa_addr,
+                  address.pointee.sa_family == sa_family_t(AF_INET),
+                  interface.ifa_flags & UInt32(IFF_UP | IFF_POINTOPOINT) == UInt32(IFF_UP | IFF_POINTOPOINT) else { continue }
+            let ip = UnsafeRawPointer(address).assumingMemoryBound(to: sockaddr_in.self).pointee.sin_addr
+            guard ip.s_addr == expected.s_addr else { continue }
+            let index = if_nametoindex(interface.ifa_name)
+            if index != 0 { return index }
+        }
+        return nil
+    }
+
+    static func makeProbe(port: UInt16) -> NWConnection? {
+        guard let port = NWEndpoint.Port(rawValue: port) else { return nil }
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(sourceAddress), port: .any)
+        return NWConnection(host: NWEndpoint.Host(peerAddress), port: port, using: parameters)
+    }
+}
+
+private struct NativeLocationOutcome: Sendable {
+    let error: String?
+    let clearStatus: LocationSessionRetryPolicy.Clear
+    let retryable: Bool
 
     init(result: RCLocationResult, returnCode: Int32) {
-        guard returnCode != 0 else {
-            self = .success
-            return
+        switch result.clear_status {
+        case RC_LOCATION_CLEAR_NOT_NEEDED: clearStatus = .notNeeded
+        case RC_LOCATION_CLEAR_CONFIRMED: clearStatus = .confirmed
+        default: clearStatus = .unconfirmed
         }
-
-        let message: String
-        if let errorMessage = result.error_message {
-            message = String(cString: errorMessage)
+        retryable = result.retryable != 0
+        if returnCode == 0 {
+            error = nil
+        } else if let message = result.error_message {
+            error = String(cString: message)
         } else {
-            message = ""
+            error = "The iPhone could not finish the location session."
         }
-        self = .failure(message.isEmpty ? "The iPhone could not start the location session." : message)
+    }
+}
+
+private final class LocationCallbackContext {
+    let coordinator: LocalDeviceSessionCoordinator
+    let runIdentifier: UUID
+
+    init(coordinator: LocalDeviceSessionCoordinator, runIdentifier: UUID) {
+        self.coordinator = coordinator
+        self.runIdentifier = runIdentifier
     }
 }
 
 private let locationStartedCallback: RCLocationStartedCallback = { context in
     guard let context else { return }
-    let contextBits = UInt(bitPattern: context)
-
+    let callback = Unmanaged<LocationCallbackContext>.fromOpaque(context).takeUnretainedValue()
+    let coordinator = callback.coordinator
+    let runIdentifier = callback.runIdentifier
     DispatchQueue.main.async {
-        guard let context = UnsafeMutableRawPointer(bitPattern: contextBits) else { return }
-        let coordinator = Unmanaged<LocalDeviceSessionCoordinator>
-            .fromOpaque(context)
-            .takeUnretainedValue()
-        coordinator.nativeLocationStarted()
+        coordinator.nativeLocationStarted(runIdentifier: runIdentifier)
     }
 }

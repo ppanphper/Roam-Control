@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 import RoamPairingFFI
 
@@ -12,7 +13,10 @@ enum ConnectionCheckState: Equatable {
 @MainActor
 @Observable
 final class ConnectionDiagnosticsCoordinator: NSObject {
-    private let browser = NetServiceBrowser()
+    private var browser: NetServiceBrowser?
+    private let probeQueue = DispatchQueue(label: "com.ppanphper.roamcontrol.connection-diagnostics", qos: .utility)
+    private var connection: NWConnection?
+    private var sawMatchedService = false
     private var pairingRecord: Data?
     private var discoveredServices: [NetService] = []
     private var timeoutTask: Task<Void, Never>?
@@ -20,12 +24,6 @@ final class ConnectionDiagnosticsCoordinator: NSObject {
 
     private(set) var state: ConnectionCheckState = .notRun
     private(set) var lastChecked: Date?
-
-    override init() {
-        super.init()
-        browser.delegate = self
-        browser.includesPeerToPeer = true
-    }
 
     func run(pairingRecord: Data?, sessionPhase: DeviceSessionPhase) {
         cancel(resetState: false)
@@ -52,14 +50,19 @@ final class ConnectionDiagnosticsCoordinator: NSObject {
         self.pairingRecord = pairingRecord
         sawNonMatchingService = false
         state = .running
+        let browser = NetServiceBrowser()
+        self.browser = browser
         browser.delegate = self
+        browser.includesPeerToPeer = true
         browser.searchForServices(ofType: "_remotepairing._tcp.", inDomain: "local.")
 
         timeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(10))
-            guard let self, self.state == .running else { return }
+            guard !Task.isCancelled, let self, self.state == .running else { return }
 
-            if self.sawNonMatchingService {
+            if self.sawMatchedService {
+                self.finish(.failed("The device announcement matches your pairing file, but the LocalDevVPN connection could not be reached."))
+            } else if self.sawNonMatchingService {
                 self.finish(.failed(
                     "LocalDevVPN is visible, but its device announcement does not match the paired iPhone. Toggle LocalDevVPN off and on, then try again."
                 ))
@@ -79,7 +82,12 @@ final class ConnectionDiagnosticsCoordinator: NSObject {
     private func cancel(resetState: Bool) {
         timeoutTask?.cancel()
         timeoutTask = nil
-        browser.stop()
+        browser?.delegate = nil
+        browser?.stop()
+        browser = nil
+        connection?.stateUpdateHandler = nil
+        connection?.cancel()
+        connection = nil
 
         for service in discoveredServices {
             service.stopMonitoring()
@@ -91,6 +99,7 @@ final class ConnectionDiagnosticsCoordinator: NSObject {
         discoveredServices = []
         pairingRecord = nil
         sawNonMatchingService = false
+        sawMatchedService = false
 
         if resetState, state == .running {
             state = .notRun
@@ -107,7 +116,8 @@ final class ConnectionDiagnosticsCoordinator: NSObject {
     }
 
     private func inspect(_ service: NetService) {
-        guard state == .running, service.port > 0 else { return }
+        guard state == .running, discoveredServices.contains(where: { $0 === service }),
+              service.port > 0, service.port <= Int(UInt16.max) else { return }
         service.startMonitoring()
 
         guard
@@ -144,11 +154,31 @@ final class ConnectionDiagnosticsCoordinator: NSObject {
             }
         }
 
-        if matchesPairedDevice {
-            finish(.passed("The pairing record is valid and this iPhone is reachable through LocalDevVPN."))
-        } else {
+        guard matchesPairedDevice else {
             sawNonMatchingService = true
+            return
         }
+        sawMatchedService = true
+        guard connection == nil, LocalDevVPNEndpoint.interfaceIndex() != nil,
+              let probe = LocalDevVPNEndpoint.makeProbe(port: UInt16(service.port)) else { return }
+        connection = probe
+        probe.stateUpdateHandler = { [weak self, weak probe] state in
+            guard let probe else { return }
+            Task { @MainActor in
+                guard let self, self.connection === probe else { return }
+                switch state {
+                case .ready:
+                    self.finish(.passed("The paired iPhone's service is reachable through LocalDevVPN."))
+                case .failed, .cancelled:
+                    probe.stateUpdateHandler = nil
+                    probe.cancel()
+                    self.connection = nil
+                default:
+                    break
+                }
+            }
+        }
+        probe.start(queue: probeQueue)
     }
 
     private func finish(_ newState: ConnectionCheckState) {
@@ -165,6 +195,7 @@ extension ConnectionDiagnosticsCoordinator: NetServiceBrowserDelegate, NetServic
         moreComing: Bool
     ) {
         MainActor.assumeIsolated {
+            guard self.browser === browser else { return }
             resolve(service)
         }
     }
@@ -174,6 +205,7 @@ extension ConnectionDiagnosticsCoordinator: NetServiceBrowserDelegate, NetServic
         didNotSearch errorDict: [String: NSNumber]
     ) {
         MainActor.assumeIsolated {
+            guard self.browser === browser else { return }
             finish(.failed("Local Network access is unavailable. Allow it in iPhone Settings, then try again."))
         }
     }

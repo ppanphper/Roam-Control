@@ -1,0 +1,107 @@
+{
+  "sha256": "3c151fe6dc56005256bc12ec452e14e40d3774e57ae568a14a6fd3dfc529a267",
+  "entries": [
+    "Payload/",
+    "Payload/RoamControl.app/",
+    "Payload/RoamControl.app/Metadata.appintents/",
+    "Payload/RoamControl.app/Metadata.appintents/version.json",
+    "Payload/RoamControl.app/Metadata.appintents/nlu/",
+    "Payload/RoamControl.app/Metadata.appintents/nlu/nlu.lzfse",
+    "Payload/RoamControl.app/Metadata.appintents/nlu/667d041f348858fc4048ee2b595c4f10.version",
+    "Payload/RoamControl.app/Metadata.appintents/extract.actionsdata",
+    "Payload/RoamControl.app/PlugIns/",
+    "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/",
+    "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/WlocLiveActivity",
+    "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/Info.plist",
+    "Payload/RoamControl.app/AppIcon60x60@2x.png",
+    "Payload/RoamControl.app/RoamControl",
+    "Payload/RoamControl.app/Assets.car",
+    "Payload/RoamControl.app/AppIcon76x76@2x~ipad.png",
+    "Payload/RoamControl.app/PrivacyInfo.xcprivacy",
+    "Payload/RoamControl.app/Info.plist",
+    "Payload/RoamControl.app/PkgInfo"
+  ],
+  "plists": {
+    "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/Info.plist": {
+      "CFBundleDevelopmentRegion": "en",
+      "CFBundleDisplayName": "wloc",
+      "CFBundleExecutable": "WlocLiveActivity",
+      "CFBundleIdentifier": "com.yu9191.wloc.LiveActivity",
+      "CFBundleInfoDictionaryVersion": "6.0",
+      "CFBundleName": "WlocLiveActivity",
+      "CFBundlePackageType": "XPC!",
+      "CFBundleShortVersionString": "1.2.1",
+      "CFBundleSupportedPlatforms": [
+        "iPhoneOS"
+      ],
+      "CFBundleVersion": "31",
+      "MinimumOSVersion": "18.0"
+    },
+    "Payload/RoamControl.app/Info.plist": {
+      "BGTaskSchedulerPermittedIdentifiers": [
+        "com.yu9191.wloc.pairing.*",
+        "com.yu9191.wloc.location.*",
+        "com.yu9191.wloc..pairing.*",
+        "com.yu9191.wloc..location.*"
+      ],
+      "CFBundleDevelopmentRegion": "en",
+      "CFBundleDisplayName": "wloc",
+      "CFBundleDocumentTypes": [
+        {
+          "CFBundleTypeName": "GPX 轨迹",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "LSItemContentTypes": [
+            "com.topografix.gpx"
+          ]
+        }
+      ],
+      "CFBundleExecutable": "RoamControl",
+      "CFBundleIcons": {
+        "CFBundlePrimaryIcon": {
+          "CFBundleIconFiles": [
+            "AppIcon60x60"
+          ],
+          "CFBundleIconName": "AppIcon"
+        }
+      },
+      "CFBundleIcons~ipad": {
+        "CFBundlePrimaryIcon": {
+          "CFBundleIconFiles": [
+            "AppIcon60x60",
+            "AppIcon76x76"
+          ]
+        }
+      },
+      "CFBundleIdentifier": "com.yu9191.wloc",
+      "CFBundleInfoDictionaryVersion": "6.0",
+      "CFBundleName": "RoamControl",
+      "CFBundlePackageType": "APPL",
+      "CFBundleShortVersionString": "1.2.1",
+      "CFBundleSupportedPlatforms": [
+        "iPhoneOS"
+      ],
+      "CFBundleURLTypes": [
+        {
+          "CFBundleTypeRole": "Editor",
+          "CFBundleURLName": "com.roamcontrol.callback",
+          "CFBundleURLSchemes": [
+            "roamcontrol"
+          ]
+        }
+      ],
+      "CFBundleVersion": "31",
+      "LSApplicationQueriesSchemes": [
+        "localdevvpn"
+      ],
+      "MinimumOSVersion": "18.0",
+      "NSLocalNetworkUsageDescription": "wloc uses the local network to securely pair with and control this iPhone through LocalDevVPN.",
+      "UIBackgroundModes": [
+        "location"
+      ]
+    }
+  },
+  "executable_sha256": "a854dd0f1f6bb5251e43aa849d55e4975bf4fe3c00acffcb04e700431bd7b441",
+  "rea_inventory_evidence_id": "ev_23d3cf33b257824651f6bc925a789fb1f91069beeac8ed751be9c16f75d0a99a",
+  "evidence_scope": "ZIP inventory and parsed plists only; declarations do not prove runtime feature success"
+}

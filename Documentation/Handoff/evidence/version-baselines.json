@@ -1,0 +1,55 @@
+{
+  "checked_on": "2026-11-18",
+  "timezone": "America/Los_Angeles",
+  "fork": {
+    "repo": "ppanphper/Roam-Control",
+    "base_commit": "f6c3cc8e921213dc098472bac3ffa5c913758055",
+    "version": "0.9.0 Build 29",
+    "license_at_head": "PolyForm Noncommercial 1.0.0",
+    "historical_mit_commit": "0654d132fcf1129f6487173763222bc5a65315cc",
+    "changed_paths_since_historical_commit": [
+      "Documentation/PublicBetaRelease.md",
+      "LICENSE",
+      "LICENSE-BETA1-MIT",
+      "LICENSING.md",
+      "NOTICE",
+      "README.md",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "source_changed_paths_since_historical_commit": [],
+    "deployment_target": "27.0",
+    "built_or_run_in_this_task": false
+  },
+  "wloc": {
+    "version": "1.2.1 Build 31",
+    "corresponding_full_source_obtained": false,
+    "minimum_os_from_ipa": "18.0",
+    "known_user_test_os": "26.5.2"
+  },
+  "official_latest_at_check": {
+    "repo": "seanhowarthdev/Roam-Control",
+    "tag": "v0.9.9",
+    "version": "0.9.9",
+    "build": 105,
+    "published_at": "2026-10-20T19:33:03Z",
+    "public_head": "07df7c8978d137d17c90b9bbef5c2c53a858303d",
+    "minimum_os_documented": "27+",
+    "app_source_publicly_distributed": false,
+    "api": "https://api.github.com/repos/seanhowarthdev/Roam-Control/releases/latest",
+    "release": "https://github.com/seanhowarthdev/Roam-Control/releases/tag/v0.9.9",
+    "readme": "https://github.com/seanhowarthdev/Roam-Control/blob/07df7c8978d137d17c90b9bbef5c2c53a858303d/README.md"
+  },
+  "build29_archive": {
+    "source_url": "https://codeload.github.com/jayohide/roam-control/zip/0654d132fcf1129f6487173763222bc5a65315cc",
+    "commit": "0654d132fcf1129f6487173763222bc5a65315cc",
+    "version": "0.9.0 Build 29",
+    "sha256": "c31dd99d93da9ca2b03168339e55b93dcdcf5001c989483f43ef1023d4bdda15",
+    "bytes": 17689118,
+    "files": 80,
+    "git_blobs_verified": 80,
+    "mismatches": [],
+    "missing_files": [],
+    "build_tested": false,
+    "matches_wloc_1_2_1": false
+  }
+}

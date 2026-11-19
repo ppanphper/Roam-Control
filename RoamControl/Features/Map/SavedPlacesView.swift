@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SavedPlacesView: View {
+    @Environment(\.appLocalization) private var l10n
     private enum ClearTarget: String, Identifiable {
         case favourites
         case history
@@ -19,6 +20,7 @@ struct SavedPlacesView: View {
     let onSelect: (LocationTarget) -> Void
     let onToggleFavourite: (LocationTarget) -> Void
     let onDeleteFavourite: (LocationTarget) -> Void
+    let onMoveFavourites: (IndexSet, Int) -> Void
     let onRenameFavourite: (LocationTarget, String) -> Void
     let onDeleteHistory: (LocationTarget) -> Void
     let onClearFavourites: () -> Void
@@ -57,6 +59,7 @@ struct SavedPlacesView: View {
                                 .tint(.blue)
                             }
                         }
+                        .onMove(perform: onMoveFavourites)
                     }
                 } header: {
                     HStack {
@@ -108,9 +111,12 @@ struct SavedPlacesView: View {
                     }
                 }
             }
-            .navigationTitle("Saved Places")
+            .navigationTitle(Text(verbatim: l10n.text("Saved Places")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if favourites.count > 1 {
+                    ToolbarItem(placement: .cancellationAction) { EditButton() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
@@ -161,11 +167,11 @@ struct SavedPlacesView: View {
     }
 
     private func beginRenaming(_ location: LocationTarget) {
-        favouriteName = location.name
+        favouriteName = l10n.name(of: location)
         favouriteBeingRenamed = location
     }
 
-    private var clearConfirmationTitle: String {
+    private var clearConfirmationTitle: LocalizedStringKey {
         switch clearTarget {
         case .favourites: "Clear all favourites?"
         case .history: "Clear location history?"
@@ -173,7 +179,7 @@ struct SavedPlacesView: View {
         }
     }
 
-    private var clearConfirmationButton: String {
+    private var clearConfirmationButton: LocalizedStringKey {
         switch clearTarget {
         case .favourites: "Clear Favourites"
         case .history: "Clear History"
@@ -181,7 +187,7 @@ struct SavedPlacesView: View {
         }
     }
 
-    private var clearConfirmationMessage: String {
+    private var clearConfirmationMessage: LocalizedStringKey {
         switch clearTarget {
         case .favourites: "Every favourite will be removed. Your history will be kept."
         case .history: "Every recently used location will be removed. Your favourites will be kept."
@@ -203,6 +209,7 @@ struct SavedPlacesView: View {
 }
 
 private struct SavedPlaceRow: View {
+    @Environment(\.appLocalization) private var l10n
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let location: LocationTarget
     let symbol: String
@@ -219,10 +226,10 @@ private struct SavedPlaceRow: View {
                         .frame(width: 24)
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(location.name)
+                        Text(verbatim: l10n.name(of: location))
                             .foregroundStyle(.primary)
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                        Text(location.subtitle)
+                        Text(verbatim: l10n.subtitle(of: location))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
@@ -242,19 +249,19 @@ private struct SavedPlaceRow: View {
                     .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isFavourite ? "Remove from favourites" : "Add to favourites")
+            .accessibilityLabel(Text(isFavourite ? LocalizedStringKey("Remove from favourites") : "Add to favourites"))
         }
     }
 
     private var locationAccessibilityLabel: String {
-        guard !location.subtitle.isEmpty else { return location.name }
-        return "\(location.name), \(location.subtitle)"
+        guard !location.subtitle.isEmpty else { return l10n.name(of: location) }
+        return l10n.format("%@, %@", l10n.name(of: location), l10n.subtitle(of: location))
     }
 }
 
 private struct EmptySavedPlacesRow: View {
     let symbol: String
-    let message: String
+    let message: LocalizedStringKey
 
     var body: some View {
         Label(message, systemImage: symbol)

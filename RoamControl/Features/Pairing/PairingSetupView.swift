@@ -1,12 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct PairingSetupView: View {
+    @Environment(\.appLocalization) private var l10n
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isImporting = false
     @State private var isConfirmingRemoval = false
+    @State private var isPreparingPairing = false
+    @State private var isRequestingNotifications = false
 
     private let localDevVPNURL = URL(string: "https://apps.apple.com/app/localdevvpn/id6755608044")!
 
@@ -21,7 +25,7 @@ struct PairingSetupView: View {
                 .padding(16)
             }
             .background(Color(uiColor: .systemGroupedBackground))
-            .navigationTitle("Device Setup")
+            .navigationTitle(Text(verbatim: l10n.text("Device Setup")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -29,13 +33,21 @@ struct PairingSetupView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $isImporting,
-            allowedContentTypes: allowedPairingTypes,
-            allowsMultipleSelection: false
-        ) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            Task { await appModel.importPairingRecord(from: url) }
+        .sheet(isPresented: $isImporting) {
+            PairingFilePicker(types: allowedPairingTypes) { copy in
+                if let copy {
+                    Task {
+                        await copy.use { url in await appModel.importPairingRecord(from: url) }
+                    }
+                }
+                isImporting = false
+            }
+        }
+        .sheet(isPresented: $isPreparingPairing) {
+            pairingPreparation
+        }
+        .onChange(of: l10n.language, initial: true) { _, _ in
+            appModel.onDevicePairing.setLocalization(l10n)
         }
         .confirmationDialog(
             "Remove this pairing record?",
@@ -60,9 +72,9 @@ struct PairingSetupView: View {
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(statusTitle)
+                    Text(verbatim: l10n.text(statusTitle))
                         .font(.headline)
-                    Text(statusMessage)
+                    Text(verbatim: l10n.text(statusMessage))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -71,7 +83,14 @@ struct PairingSetupView: View {
                 Spacer(minLength: 0)
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(statusTitle). \(statusMessage)")
+            .accessibilityLabel(Text(verbatim: l10n.format("%@. %@", l10n.text(statusTitle), l10n.text(statusMessage))))
+
+            if let message = appModel.pairingOperationError {
+                Label(l10n.text(message), systemImage: "exclamationmark.triangle")
+                    .font(.subheadline)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if case .paired(let summary) = appModel.pairingStatus {
                 Divider()
@@ -80,7 +99,7 @@ struct PairingSetupView: View {
 
                 pairingDetail(
                     title: "Added",
-                    value: summary.importedAt.formatted(date: .abbreviated, time: .shortened)
+                    value: summary.importedAt.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().locale(l10n.locale))
                 )
 
                 Button("Replace Pairing File") {
@@ -105,9 +124,9 @@ struct PairingSetupView: View {
                         .frame(maxWidth: .infinity)
                     } else {
                         Button {
-                            appModel.startOnDevicePairing()
+                            isPreparingPairing = true
                         } label: {
-                            Label("Pair This iPhone", systemImage: "iphone.and.arrow.forward")
+                            Label(l10n.text(startPairingTitle), systemImage: "iphone.and.arrow.forward")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
@@ -128,6 +147,46 @@ struct PairingSetupView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(isBusy)
+            }
+        }
+    }
+
+    private var startPairingTitle: String {
+        if case .failed = appModel.onDevicePairing.phase { return "Try Pairing Again" }
+        return "Pair This iPhone"
+    }
+
+    private var pairingPreparation: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    instructionRow("Open Settings › Privacy & Security › Developer Mode.")
+                    Text("Leave Developer Mode open in Settings, then return here to start pairing.")
+                    Text("Allow notifications to see the pairing code while Settings is open.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button("Start Pairing") {
+                        isRequestingNotifications = true
+                        Task { @MainActor in
+                            await appModel.onDevicePairing.requestNotificationPermission()
+                            isRequestingNotifications = false
+                            guard isPreparingPairing else { return }
+                            isPreparingPairing = false
+                            appModel.startOnDevicePairing()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isRequestingNotifications)
+                }
+                .padding(20)
+            }
+            .navigationTitle(Text("Get Settings ready"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPreparingPairing = false }
+                }
             }
         }
     }
@@ -162,14 +221,14 @@ struct PairingSetupView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Enter this code in Settings")
                     .font(.subheadline.weight(.semibold))
-                Text(pin.map(String.init).joined(separator: " "))
+                Text(verbatim: l10n.technical(pin.map(String.init).joined(separator: " ")))
                     .font(.largeTitle.weight(.semibold))
                     .fontDesign(.rounded)
                     .monospacedDigit()
                     .foregroundStyle(.blue)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
-                    .accessibilityLabel("Pairing code \(pin)")
+                    .accessibilityLabel(Text(verbatim: l10n.format("Pairing code %@", l10n.technical(pin))))
                 Text("The code is generated on this iPhone and expires with this pairing attempt.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -177,6 +236,11 @@ struct PairingSetupView: View {
 
         case .storing:
             Divider()
+            if let notice = appModel.onDevicePairing.expiryMessage {
+                Text(verbatim: l10n.text(notice))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             Label {
                 Text("Securing the pairing record in Keychain…")
             } icon: {
@@ -210,10 +274,6 @@ struct PairingSetupView: View {
             }
             .buttonStyle(.bordered)
 
-            Text("New on-device pairing is available on iOS 27. The simulator can test the screen, but Apple only exposes the real handshake on a physical iPhone.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -245,13 +305,13 @@ struct PairingSetupView: View {
                 .frame(width: 24, height: 24)
                 .background(.blue, in: Circle())
 
-            Text(text)
+            Text(verbatim: l10n.text(text))
                 .font(.subheadline)
                 .padding(.top, 2)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(number). \(text)")
+        .accessibilityLabel(Text(verbatim: l10n.format("Step %@. %@", number, l10n.text(text))))
     }
 
     private func instructionRow(_ text: String) -> some View {
@@ -260,12 +320,12 @@ struct PairingSetupView: View {
                 .font(.caption.bold())
                 .foregroundStyle(.blue)
                 .padding(.top, 3)
-            Text(text)
+            Text(verbatim: l10n.text(text))
                 .font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
+        .accessibilityLabel(Text(verbatim: l10n.text(text)))
     }
 
     private func pairingDetail(
@@ -276,21 +336,21 @@ struct PairingSetupView: View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
+                    Text(verbatim: l10n.text(title))
                         .foregroundStyle(.secondary)
-                    Text(value)
+                    Text(verbatim: monospaced ? l10n.technical(value) : value)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .font(monospaced ? .caption.monospaced() : .caption)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                LabeledContent(title, value: value)
+                LabeledContent(l10n.text(title), value: monospaced ? l10n.technical(value) : value)
                     .font(monospaced ? .caption.monospaced() : .caption)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(value)")
+        .accessibilityLabel(Text(verbatim: l10n.format("%@, %@", l10n.text(title), monospaced ? l10n.technical(value) : value)))
     }
 
     private var allowedPairingTypes: [UTType] {
@@ -394,6 +454,37 @@ struct PairingSetupView: View {
             return "Roam Control can use this record when the LocalDevVPN session layer is connected."
         case .failed(let message):
             return message
+        }
+    }
+}
+
+private struct PairingFilePicker: UIViewControllerRepresentable {
+    let types: [UTType]
+    let completion: (PairingPickerCopy?) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+
+    func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {
+        context.coordinator.completion = completion
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        var completion: (PairingPickerCopy?) -> Void
+        init(completion: @escaping (PairingPickerCopy?) -> Void) { self.completion = completion }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            completion(urls.first.map(PairingPickerCopy.init))
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            completion(nil)
         }
     }
 }

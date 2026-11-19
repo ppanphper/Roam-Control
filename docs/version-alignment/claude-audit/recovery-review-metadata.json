@@ -1,0 +1,22 @@
+{
+  "cli_version": "2.1.303",
+  "node_version": "24.22.1",
+  "actual_models": [
+    "claude-opus-5-5"
+  ],
+  "source_sha256": "58dec45898aea7e756b11c3e03d51d84c642cfeaf369dcf7e8fe1ca44540626e",
+  "source_unchanged_during_review": true,
+  "read_only_tools": [
+    "Read",
+    "Glob",
+    "Grep"
+  ],
+  "physical_device_operations": false,
+  "exit_code": 0,
+  "is_error": false,
+  "permission_denials": [],
+  "session_id": "3c47c5a6-569d-4d5b-8184-2d7dd8d3bb5e",
+  "num_turns": 14,
+  "prompt_sha256": "394545e3e7c2e4ebb9f841fa1f2b59d3f080d1034259f7fa6d7c3a7e405718bb",
+  "report_sha256": "2a0e80cd8ff43ebbf6fb9418bf9c236ec4d66d2ae5ac4ed8876e4674f5fff953"
+}

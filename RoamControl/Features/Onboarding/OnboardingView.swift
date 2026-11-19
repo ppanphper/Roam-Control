@@ -5,6 +5,7 @@ struct OnboardingView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedPage = 0
+    @State private var isRestoringBackup = false
 
     let isReplay: Bool
     private let pages = OnboardingPage.pages
@@ -87,9 +88,22 @@ struct OnboardingView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
+
+                    if isLastPage && !isReplay {
+                        Button("Restore an Existing Backup") { isRestoringBackup = true }
+                            .font(.subheadline)
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.bottom, 28)
+            }
+        }
+        .sheet(isPresented: $isRestoringBackup) {
+            NavigationStack {
+                BackupRestoreView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { isRestoringBackup = false }
+                    } }
             }
         }
     }
@@ -116,7 +130,7 @@ struct OnboardingView: View {
         }
     }
 
-    private var finalButtonTitle: String {
+    private var finalButtonTitle: LocalizedStringKey {
         if !isLastPage { return "Continue" }
         return isReplay ? "Done" : "Set Up This iPhone"
     }
@@ -219,15 +233,15 @@ private struct OnboardingPageView: View {
 
 private struct OnboardingPage {
     let symbol: String
-    let title: String
-    let message: String
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
     let colors: [Color]
     let showsUsageStatisticsControl: Bool
 
     init(
         symbol: String,
-        title: String,
-        message: String,
+        title: LocalizedStringKey,
+        message: LocalizedStringKey,
         colors: [Color],
         showsUsageStatisticsControl: Bool = false
     ) {

@@ -1,0 +1,36 @@
+name: RoamAlignmentUI
+options:
+  deploymentTarget:
+    iOS: '26.0'
+settings:
+  base:
+    CODE_SIGNING_ALLOWED: NO
+    GENERATE_INFOPLIST_FILE: YES
+    SWIFT_VERSION: '5.0'
+targets:
+  Harness:
+    type: application
+    platform: iOS
+    sources: [Harness]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ppanphper.roamcontrol.ui-harness
+        TARGETED_DEVICE_FAMILY: '1'
+  RoamUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Harness
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ppanphper.roamcontrol.ui-tests
+        TEST_TARGET_NAME: Harness
+schemes:
+  RoamAlignmentUI:
+    build:
+      targets:
+        Harness: all
+        RoamUITests: [test]
+    test:
+      targets: [RoamUITests]

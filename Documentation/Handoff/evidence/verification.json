@@ -1,0 +1,39 @@
+{
+  "recorded_date": "2026-11-18",
+  "timezone": "America/Los_Angeles",
+  "device": {
+    "model": "iPhone 13 Pro",
+    "ios": "26.5.2",
+    "build": "23F84"
+  },
+  "app": {
+    "version": "1.2.1",
+    "build": "31",
+    "variant": "external LocalDevVPN",
+    "ipa_sha256": "3c151fe6dc56005256bc12ec452e14e40d3774e57ae568a14a6fd3dfc529a267"
+  },
+  "assistant_verified": {
+    "standalone_install": true,
+    "standalone_pairing": true,
+    "standalone_connection": "passed over Wi-Fi",
+    "standalone_location_session_started": false,
+    "livecontainer_import": true,
+    "livecontainer_launched_to": "welcome screen",
+    "fix_local_notifications": true
+  },
+  "user_report": {
+    "date": "2026-11-18",
+    "quote": "已经测试可以正常使用",
+    "context": "导入 LiveContainer 的外部 LocalDevVPN 版 wloc",
+    "per_feature_test_log_provided": false
+  },
+  "not_verified": [
+    "本 fork 构建和 iOS 26.5.2 运行",
+    "所有路线和定位功能逐项覆盖",
+    "蜂窝单独连接",
+    "长期后台维持",
+    "独立版和容器版并存的全部回调场景"
+  ],
+  "standalone_uninstalled_by_assistant": false,
+  "future_device_testing_owner": "user"
+}

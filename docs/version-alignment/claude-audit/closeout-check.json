@@ -1,0 +1,69 @@
+{
+  "status": "pending",
+  "branch": "codex/version-alignment-20261118",
+  "base": "origin/main",
+  "remote": "origin",
+  "cache_only": false,
+  "blockers": [
+    {
+      "code": "local_not_merged",
+      "detail": "local \u5206\u652f\u6700\u65b0\u63d0\u4ea4\u5c1a\u672a\u88ab\u76ee\u6807\u8bc1\u660e\u5305\u542b: 402ff6fb9bad17746a2a7883a944c43a5c2f4974\uff1bsquash/rebase \u8bf7\u63d0\u4f9b --pr"
+    },
+    {
+      "code": "dirty_worktree",
+      "detail": "\u5de5\u4f5c\u533a\u6709\u672a\u63d0\u4ea4/\u672a\u8ddf\u8e2a\u6587\u4ef6\uff0c\u9700\u5148\u4fdd\u5b58\u5e76\u5904\u7406"
+    },
+    {
+      "code": "ignored_files",
+      "detail": "\u5de5\u4f5c\u533a\u6709 ignored \u6587\u4ef6\uff1b\u5148\u8f6c\u5b58\uff0c\u6216\u6307\u5b9a\u5de5\u4f5c\u533a\u5916\u7684 --backup-dir"
+    },
+    {
+      "code": "worktree_busy",
+      "detail": "\u5de5\u4f5c\u533a\u4ecd\u88ab\u8fdb\u7a0b\u4f7f\u7528\uff0cPID: 63537, 64375"
+    }
+  ],
+  "plan": [
+    {
+      "action": "remove_worktree",
+      "path": "/Volumes/Extra disk/Directories/Users/pandy/ai-code/Roam-Control-version-alignment-20261118"
+    },
+    {
+      "action": "delete_local_branch",
+      "branch": "codex/version-alignment-20261118",
+      "expected_oid": "402ff6fb9bad17746a2a7883a944c43a5c2f4974"
+    }
+  ],
+  "completed": [],
+  "next_steps": [],
+  "main_worktree": "/Volumes/Extra disk/Directories/Users/pandy/ai-code/Roam-Control",
+  "tips": {
+    "base": "f6c3cc8e921213dc098472bac3ffa5c913758055",
+    "local": "402ff6fb9bad17746a2a7883a944c43a5c2f4974",
+    "remote": null
+  },
+  "creation_base": "main",
+  "pr": null,
+  "merge_evidence": {},
+  "worktree": "/Volumes/Extra disk/Directories/Users/pandy/ai-code/Roam-Control-version-alignment-20261118",
+  "related_archive_resources": [],
+  "trellis": {
+    "active": [],
+    "archived": [],
+    "skipped": false
+  },
+  "ignored": {
+    "count": 26572,
+    "examples": [
+      "outputs/Roam-Control-0.9.9-Build30-2026-11-18_03-32-54.ipa",
+      "outputs/Roam-Control-0.9.9-Build30-2026-11-18_03-32-54.json",
+      "outputs/Roam-Control-0.9.9-Build31-2026-11-18_20-18-09.ipa",
+      "outputs/Roam-Control-0.9.9-Build31-2026-11-18_20-18-09.json",
+      "outputs/audit-build31-final/backup-created.png",
+      "outputs/audit-build31-final/freehand-preview-dark.png",
+      "outputs/audit-build31-final/gpx-document-picker.png",
+      "outputs/audit-build31-final/home-accessibility-large.png",
+      "outputs/audit-build31-final/home-english.png",
+      "outputs/audit-build31-final/joystick-preview.png"
+    ]
+  }
+}

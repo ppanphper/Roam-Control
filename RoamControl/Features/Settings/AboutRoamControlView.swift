@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct AboutRoamControlView: View {
+    @Environment(\.appLocalization) private var l10n
     var body: some View {
         List {
             appSummary
@@ -85,21 +86,21 @@ struct AboutRoamControlView: View {
                 )
             }
 
-            Section("Walking routes") {
+            Section("Routes and Movement") {
                 guideRow(
-                    "Preview Walking Route",
+                    "Preview Route",
                     symbol: "figure.walk",
-                    text: "Ask Apple Maps for a walking route from your current point to the selected destination before anything starts."
+                    text: "Choose Walking, Cycling or Driving and preview a route from the current or active simulated point before starting."
                 )
                 guideRow(
-                    "Walking pace",
+                    "Custom Speeds",
                     symbol: "speedometer",
                     text: "Choose how quickly the simulated location moves along the route."
                 )
                 guideRow(
-                    "Start Walking",
+                    "Start Movement",
                     symbol: "figure.walk.motion",
-                    text: "Begin moving the reported location along the previewed route. The walk can continue while you use another app."
+                    text: "Move along the route at the selected speed. Background execution depends on iOS; foreground fallback requires keeping this app open."
                 )
                 guideRow(
                     "Pause or Resume",
@@ -107,9 +108,9 @@ struct AboutRoamControlView: View {
                     text: "Hold the current point on the route, then continue from exactly where it paused."
                 )
                 guideRow(
-                    "Walk Route Back",
+                    "Reverse Route",
                     symbol: "arrow.uturn.backward",
-                    text: "After arrival, reverse the journey and walk back along the route."
+                    text: "Reverse the prepared route or return after arrival using the same movement mode."
                 )
                 guideRow(
                     "New Location",
@@ -121,6 +122,19 @@ struct AboutRoamControlView: View {
                     symbol: "stop.fill",
                     text: "Stop walking, clear the route and restore the real location. A confirmation helps prevent accidental stops."
                 )
+            }
+
+            Section("Drawing, GPX and Joystick") {
+                guideRow("Manual Route", symbol: "point.topleft.down.curvedto.point.bottomright.up",
+                         text: "Add route points on the map or draw a stroke. Use Undo to remove the last point or stroke. Two fingers move the map while drawing.")
+                guideRow("GPX", symbol: "doc",
+                         text: "Import one GPX track or route, preview it, then start movement. Export a prepared route to save or share it. Separate track segments are not joined automatically.")
+                guideRow("Joystick", symbol: "gamecontroller",
+                         text: "Push to move in a direction. The distance from the centre controls speed. Release to hold position; Stop & Restore ends the location session.")
+                guideRow("Follow Location", symbol: "location.viewfinder",
+                         text: "Follow the simulated point while moving. Dragging the map pauses follow; the location button resumes it.")
+                guideRow("Backup & Restore", symbol: "externaldrive",
+                         text: "Back up favourites, history and supported preferences before moving to a new installation. Pairing and active sessions are excluded.")
             }
 
             Section("Setup & support") {
@@ -145,8 +159,11 @@ struct AboutRoamControlView: View {
                     text: "Erase the pairing record and all saved app choices, then return to onboarding. LocalDevVPN itself is not changed."
                 )
             }
+            Section("Feedback") {
+                Link("Open Fork Issues", destination: URL(string: "https://github.com/ppanphper/Roam-Control/issues")!)
+            }
         }
-        .navigationTitle("About Roam Control")
+        .navigationTitle(Text(verbatim: l10n.text("About Roam Control")))
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -191,7 +208,7 @@ struct AboutRoamControlView: View {
             stepRow(1, "Pair this iPhone once.")
             stepRow(2, "Connect LocalDevVPN.")
             stepRow(3, "Search, choose or drop a location.")
-            stepRow(4, "Start a fixed location or preview a walking route.")
+            stepRow(4, "Start a fixed location, route or joystick session.")
         } header: {
             Text("How it works")
         } footer: {
@@ -207,12 +224,12 @@ struct AboutRoamControlView: View {
                 .frame(width: 24, height: 24)
                 .background(.blue, in: Circle())
 
-            Text(text)
+            Text(verbatim: l10n.text(text))
                 .font(.subheadline)
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(number). \(text)")
+        .accessibilityLabel(Text(verbatim: l10n.format("Step %lld. %@", Int64(number), l10n.text(text))))
     }
 
     private func guideRow(_ title: String, symbol: String, text: String) -> some View {
@@ -224,10 +241,10 @@ struct AboutRoamControlView: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(verbatim: l10n.text(title))
                     .font(.subheadline.weight(.semibold))
 
-                Text(text)
+                Text(verbatim: l10n.text(text))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -235,7 +252,7 @@ struct AboutRoamControlView: View {
         }
         .padding(.vertical, 3)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title). \(text)")
+        .accessibilityLabel(Text(verbatim: l10n.format("%@. %@", l10n.text(title), l10n.text(text))))
     }
 }
 

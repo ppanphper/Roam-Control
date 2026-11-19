@@ -10,6 +10,7 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
     var selectedLocation: LocationTarget?
     var isSearching = false
     var isFindingRealLocation = false
+    var awaitingRealLocationAfterSession = false
     var errorMessage: String?
     var cameraPosition: MapCameraPosition
 
@@ -73,7 +74,8 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
             coordinate,
             fallbackName: "Dropped Pin",
             fallbackDescription: "Selected from the map",
-            recenter: false
+            recenter: false,
+            origin: .map
         )
     }
 
@@ -90,7 +92,8 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
                 coordinate,
                 fallbackName: "Entered Location",
                 fallbackDescription: "Entered using coordinates",
-                recenter: true
+                recenter: true,
+                origin: .manualCoordinate
             )
             isSearching = false
             return
@@ -131,15 +134,41 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
         )
     }
 
-    func show(_ route: MKRoute) {
-        let routeRect = route.polyline.boundingMapRect
-        guard !routeRect.isNull, !routeRect.isEmpty else { return }
+    var routeStart: LocationTarget? {
+        guard let real = cachedRealLocation() else { return nil }
+        return LocationTarget(name: "Current Location", subtitle: "",
+                              latitude: real.coordinate.latitude, longitude: real.coordinate.longitude,
+                              origin: .manualCoordinate, nameKey: "Current Location")
+    }
 
+    func show(_ route: MovementRoute) {
+        let routeRect = route.polyline.boundingMapRect
+        guard !routeRect.isNull else { return }
         let horizontalPadding = max(routeRect.size.width * 0.24, 1_200)
         let verticalPadding = max(routeRect.size.height * 0.30, 1_200)
-        cameraPosition = .rect(
-            routeRect.insetBy(dx: -horizontalPadding, dy: -verticalPadding)
-        )
+        cameraPosition = .rect(routeRect.insetBy(dx: -horizontalPadding, dy: -verticalPadding))
+    }
+
+    static func initialFollowDistance(for mode: MovementMode, isJoystick: Bool) -> CLLocationDistance {
+        if isJoystick { return 300 }
+        switch mode {
+        case .walking: return 450
+        case .cycling: return 800
+        case .driving: return 1_500
+        }
+    }
+
+    func center(on coordinate: CLLocationCoordinate2D, keeping camera: MapCamera?, distance: CLLocationDistance? = nil) {
+        guard let distance = distance ?? camera?.distance else {
+            cameraPosition = .region(MKCoordinateRegion(
+                center: coordinate,
+                latitudinalMeters: 1_200,
+                longitudinalMeters: 1_200
+            ))
+            return
+        }
+        cameraPosition = .camera(MapCamera(centerCoordinate: coordinate, distance: distance,
+                                           heading: camera?.heading ?? 0, pitch: camera?.pitch ?? 0))
     }
 
     func prepareCurrentLocation(recenter: Bool = false) {
@@ -208,7 +237,8 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
                 name: item.name ?? searchQuery,
                 subtitle: placeDescription(for: item),
                 latitude: coordinate.latitude,
-                longitude: coordinate.longitude
+                longitude: coordinate.longitude,
+                origin: .search
             )
 
             selectedLocation = target
@@ -230,14 +260,18 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
         _ coordinate: CLLocationCoordinate2D,
         fallbackName: String,
         fallbackDescription: String,
-        recenter: Bool
+        recenter: Bool,
+        origin: LocationOrigin
     ) async {
         errorMessage = nil
         let pendingTarget = LocationTarget(
             name: fallbackName,
             subtitle: "Finding nearby address…",
             latitude: coordinate.latitude,
-            longitude: coordinate.longitude
+            longitude: coordinate.longitude,
+            origin: origin,
+            nameKey: fallbackName,
+            subtitleKey: "Finding nearby address…"
         )
         selectedLocation = pendingTarget
 
@@ -257,20 +291,27 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
                 name: fallbackName,
                 subtitle: fallbackDescription,
                 latitude: coordinate.latitude,
-                longitude: coordinate.longitude
+                longitude: coordinate.longitude,
+                origin: origin,
+                nameKey: fallbackName,
+                subtitleKey: fallbackDescription
             )
             return
         }
 
         do {
             let items = try await request.mapItems
-            guard selectedLocation?.id == pendingTarget.id, let item = items.first else { return }
+            guard selectedLocation?.id == pendingTarget.id else { return }
+            let item = items.first
 
             selectedLocation = LocationTarget(
-                name: item.name ?? fallbackName,
-                subtitle: placeDescription(for: item),
+                name: item?.name ?? fallbackName,
+                subtitle: item.map(placeDescription(for:)) ?? fallbackDescription,
                 latitude: coordinate.latitude,
-                longitude: coordinate.longitude
+                longitude: coordinate.longitude,
+                origin: origin,
+                nameKey: item?.name == nil ? fallbackName : nil,
+                subtitleKey: item == nil ? fallbackDescription : nil
             )
         } catch {
             guard selectedLocation?.id == pendingTarget.id else { return }
@@ -278,7 +319,10 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
                 name: fallbackName,
                 subtitle: fallbackDescription,
                 latitude: coordinate.latitude,
-                longitude: coordinate.longitude
+                longitude: coordinate.longitude,
+                origin: origin,
+                nameKey: fallbackName,
+                subtitleKey: fallbackDescription
             )
         }
     }
@@ -380,6 +424,7 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
                 self.locationManager.stopUpdatingLocation()
                 self.locationRequestStartedAt = nil
                 self.isFindingRealLocation = false
+                self.awaitingRealLocationAfterSession = false
                 if self.recenterOnNextRealLocation {
                     self.recenterOnNextRealLocation = false
                     if self.shouldReportLocationErrors {
@@ -389,6 +434,7 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
             }
         case .denied, .restricted:
             isFindingRealLocation = false
+            awaitingRealLocationAfterSession = false
             if recenter && shouldReportLocationErrors {
                 errorMessage = "Allow Location access in Settings to show your real position."
             }
@@ -405,6 +451,7 @@ final class MapViewModel: NSObject, MKLocalSearchCompleterDelegate {
             return
         }
 
+        awaitingRealLocationAfterSession = false
         lastRealLocation = location
         isRealLocationCacheTrusted = true
         requiresFreshRealLocation = false

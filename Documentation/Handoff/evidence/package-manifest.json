@@ -1,0 +1,140 @@
+{
+  "created_at": "2026-11-17T23:27:27.956721-08:00",
+  "source": "wloc-original.ipa",
+  "source_sha256": "a3f77f2a5656caa5efef0273dd097ff3e37369dfd6b23c0e6e523cdc3d50244c",
+  "output": "wloc-1.2.1-LocalDevVPN-2026-11-17_23-27-27.ipa",
+  "output_sha256": "3c151fe6dc56005256bc12ec452e14e40d3774e57ae568a14a6fd3dfc529a267",
+  "output_bytes": 1817154,
+  "change": "Omit only WlocTunnel.appex; retain all other entry bytes and permissions.",
+  "removed": [
+    {
+      "path": "Payload/RoamControl.app/PlugIns/WlocTunnel.appex/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/PlugIns/WlocTunnel.appex/Info.plist",
+      "bytes": 973,
+      "sha256": "c62c02f598a903bc462b6885ae32333a9225b74fe5703d736e8172e2d14e6e42"
+    },
+    {
+      "path": "Payload/RoamControl.app/PlugIns/WlocTunnel.appex/WlocTunnel",
+      "bytes": 109952,
+      "sha256": "11aa9f549d0c30ac2328944a4cbed4956fcd86fb879b81107ad5d4985999c408"
+    }
+  ],
+  "retained": [
+    {
+      "path": "Payload/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/Metadata.appintents/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/Metadata.appintents/version.json",
+      "bytes": 53,
+      "sha256": "9734d5bb42c949505a719cbca76baa9736fb9678e638b43ff527c200d3d9dea1"
+    },
+    {
+      "path": "Payload/RoamControl.app/Metadata.appintents/nlu/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/Metadata.appintents/nlu/nlu.lzfse",
+      "bytes": 2288,
+      "sha256": "812d84960f43b416e14eff1b577240b9a8f8725e1e0d0e1d118cf9ab09af75b4"
+    },
+    {
+      "path": "Payload/RoamControl.app/Metadata.appintents/nlu/667d041f348858fc4048ee2b595c4f10.version",
+      "bytes": 1,
+      "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d"
+    },
+    {
+      "path": "Payload/RoamControl.app/Metadata.appintents/extract.actionsdata",
+      "bytes": 9176,
+      "sha256": "77fdf98847fcce3c6981e311907f6bb1bd60a38140b01a0edda668e71b1c2361"
+    },
+    {
+      "path": "Payload/RoamControl.app/PlugIns/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/WlocLiveActivity",
+      "bytes": 115016,
+      "sha256": "c06e3557a3ed1f18a900367c2d24afd1e7f6d75d3241beefefd98070bcae3bef"
+    },
+    {
+      "path": "Payload/RoamControl.app/PlugIns/WlocLiveActivity.appex/Info.plist",
+      "bytes": 890,
+      "sha256": "aa77f4a4596bd332cc87c0a90725b6d6d3b87e8ea3917b54609d7aef61275ce9"
+    },
+    {
+      "path": "Payload/RoamControl.app/AppIcon60x60@2x.png",
+      "bytes": 2294,
+      "sha256": "fa4de66964edf9c9728d80e482b1f14a4e093e64560a05d4c62d413cec2abe74"
+    },
+    {
+      "path": "Payload/RoamControl.app/RoamControl",
+      "bytes": 4102256,
+      "sha256": "a854dd0f1f6bb5251e43aa849d55e4975bf4fe3c00acffcb04e700431bd7b441"
+    },
+    {
+      "path": "Payload/RoamControl.app/Assets.car",
+      "bytes": 41496,
+      "sha256": "c0fe7c91687647b20a9c7a61e6404a3819752a9ea608f9baee0cc3330042a816"
+    },
+    {
+      "path": "Payload/RoamControl.app/AppIcon76x76@2x~ipad.png",
+      "bytes": 2909,
+      "sha256": "6ded619b01ada2e3b26bd22fc2d757ac5a78efdf6234d8e3ba7679af9c595e6f"
+    },
+    {
+      "path": "Payload/RoamControl.app/PrivacyInfo.xcprivacy",
+      "bytes": 1359,
+      "sha256": "248a5519c66f0d344dff4016f1627d6aad2f4e888591cfb7619ee330cac97d87"
+    },
+    {
+      "path": "Payload/RoamControl.app/Info.plist",
+      "bytes": 3041,
+      "sha256": "36ea00615ecfcf8803b9a284759beb18b280de4d1770f97a10fd6fafdd8c5b0a"
+    },
+    {
+      "path": "Payload/RoamControl.app/PkgInfo",
+      "bytes": 8,
+      "sha256": "82502191c9484b04d685374f9879a0066069c49b8acae7a04b01d38d07e8eca0"
+    }
+  ],
+  "bundle_id": "com.yu9191.wloc",
+  "minimum_os": "18.0",
+  "version": "1.2.1",
+  "build": "31",
+  "main_executable_sha256": "a854dd0f1f6bb5251e43aa849d55e4975bf4fe3c00acffcb04e700431bd7b441",
+  "signature": "Unsigned, like source; installation tool must sign.",
+  "validation": {
+    "archive_crc": "passed",
+    "retained_member_bytes_and_permissions": "identical",
+    "main_executable": "identical",
+    "main_info_plist": "identical",
+    "built_in_tunnel_extension": "absent",
+    "live_activity_extension": "retained",
+    "physical_device_installation": "not performed",
+    "physical_device_connection": "not tested"
+  },
+  "snapshot_note": "构包时的验证状态；后续安装及用户反馈见 verification.json。"
+}

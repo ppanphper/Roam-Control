@@ -1,9 +1,11 @@
 import SwiftUI
 
 struct SessionRecoveryView: View {
+    @Environment(\.appLocalization) private var l10n
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let recovery: SessionRecoveryRecord
+    let units: RouteUnits
     let isPaired: Bool
     let isResuming: Bool
     let isRestoring: Bool
@@ -14,192 +16,103 @@ struct SessionRecoveryView: View {
     let onCancel: () -> Void
 
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                ScrollView(.vertical, showsIndicators: false) {
-                    content
-                }
-                .frame(maxHeight: 540)
-            } else {
+        GeometryReader { geometry in
+            VStack {
+                Spacer(minLength: 0)
                 content
+                    .movementPanel(maximumHeight: max(160, geometry.size.height - 56))
+                    .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 20 : 26)
-        .padding(.top, 12)
-        .padding(.bottom, 24)
-        .frame(maxWidth: 520)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 32, style: .continuous)
-                .stroke(.white.opacity(0.16), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.24), radius: 28, y: 12)
     }
 
     private var content: some View {
-        VStack(spacing: 20) {
-            Capsule()
-                .fill(.secondary.opacity(0.45))
-                .frame(width: 38, height: 5)
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Interrupted Session", systemImage: "location.slash.circle.fill")
+                .font(.title3.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
 
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.orange, .pink],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(
-                        width: dynamicTypeSize.isAccessibilitySize ? 66 : 78,
-                        height: dynamicTypeSize.isAccessibilitySize ? 66 : 78
-                    )
-
-                Image(systemName: recovery.isWalkingRoute ? "figure.walk.motion" : "location.fill")
-                    .font(.system(size: 31, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-
-            VStack(spacing: 9) {
-                Text("Previous Session Interrupted")
-                    .font(.title2.bold())
-
-                Text(summaryText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(spacing: 10) {
-                recoveryDetail(
-                    title: recovery.isWalkingRoute ? "Last saved point" : "Last location",
-                    value: recovery.lastReportedLocation.name,
-                    symbol: "mappin.and.ellipse"
-                )
-
-                if let destination = recovery.destination, recovery.isWalkingRoute {
-                    recoveryDetail(
-                        title: "Destination",
-                        value: destination.name,
-                        symbol: "flag.checkered"
-                    )
+            VStack(alignment: .leading, spacing: 8) {
+                detail("Mode", value: Text(modeTitle), symbol: modeSymbol)
+                detail("Last reported location", value: Text(verbatim: l10n.name(of: recovery.lastReportedLocation)), symbol: "mappin")
+                if let destination = recovery.movement?.route?.destination ?? recovery.destination {
+                    detail("Destination", value: Text(verbatim: l10n.name(of: destination)), symbol: "flag.checkered")
                 }
-
-                recoveryDetail(
-                    title: "Last active",
-                    value: recovery.updatedAt.formatted(date: .abbreviated, time: .shortened),
-                    symbol: "clock"
-                )
-            }
-            .padding(14)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            if isResuming || isRestoring {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text(isRestoring ? "Restoring real location…" : "Preparing the route…")
-                        .font(.subheadline.weight(.semibold))
+                if let movement = recovery.movement {
+                    detail("Target speed", value: Text(units.speed(movement.speedMetresPerSecond, locale: l10n.locale)), symbol: "speedometer")
+                    if let route = movement.route {
+                        let fraction = min(movement.distanceTravelled / max(route.distanceMetres, 1e-8), 1)
+                        detail("Route progress", value: Text(fraction.formatted(.percent.precision(.fractionLength(0)).locale(l10n.locale))), symbol: "point.bottomleft.forward.to.point.topright.scurvepath")
+                        if movement.isPaused {
+                            Label("Paused", systemImage: "pause.circle").font(.subheadline)
+                        }
+                    }
                 }
-                .frame(maxWidth: .infinity)
-
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .foregroundStyle(.secondary)
-            } else {
-                Button(action: onResume) {
-                    Label(resumeTitle, systemImage: recovery.isWalkingRoute ? "figure.walk" : "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(!isPaired)
-
-                Button(role: .destructive, action: onRestore) {
-                    Label("Restore Real Location", systemImage: "location.slash.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .disabled(!isPaired)
-
-                Button("My Real Location Is Already Back", action: onAlreadyRestored)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !isPaired {
-                Label("Pair this iPhone before resuming or restoring the session.", systemImage: "iphone.and.arrow.forward")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                detail("Last active", value: Text(recovery.updatedAt.formatted(.dateTime.year().month(.abbreviated).day().hour().minute().locale(l10n.locale))), symbol: "clock")
             }
 
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
+                Label(l10n.text(errorMessage), systemImage: "exclamationmark.circle")
+                    .font(.subheadline).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
-            Text("Restoring reconnects only long enough to clear the simulated location. Nothing starts automatically.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var summaryText: String {
-        if let destination = recovery.destination, recovery.isWalkingRoute {
-            return "Roam Control did not receive a normal end signal while walking to \(destination.name). You can continue from the last saved point or safely restore your real location."
-        }
-
-        return "Roam Control did not receive a normal end signal for the location at \(recovery.lastReportedLocation.name). Choose what this iPhone should do next."
-    }
-
-    private var resumeTitle: String {
-        recovery.isWalkingRoute ? "Resume Walking" : "Resume Location"
-    }
-
-    private func recoveryDetail(title: String, value: String, symbol: String) -> some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                HStack(alignment: .top, spacing: 11) {
-                    Image(systemName: symbol)
-                        .foregroundStyle(.blue)
-                        .frame(width: 22)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(title)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(value)
-                            .font(.caption.weight(.semibold))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+            if isResuming || isRestoring {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(verbatim: l10n.text(isRestoring ? "Restoring real location…" : "Resuming session…"))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .font(.subheadline)
+                .frame(minHeight: 44)
+                MapPanelButton(title: "Cancel", symbol: "xmark", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
             } else {
-                HStack(spacing: 11) {
-                    Image(systemName: symbol)
-                        .foregroundStyle(.blue)
-                        .frame(width: 22)
-
-                    Text(title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer(minLength: 8)
-
-                    Text(value)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
+                MapPanelButton(title: resumeTitle, symbol: modeSymbol, action: onResume)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!isPaired)
+                MapPanelButton(title: "Restore Real Location", symbol: "location.slash.fill", role: .destructive, action: onRestore)
+                    .buttonStyle(.bordered)
+                    .disabled(!isPaired)
+                Button("My Real Location Is Already Back", action: onAlreadyRestored)
+                    .font(.subheadline)
+                    .frame(minHeight: 44, alignment: .leading)
+                if !isPaired {
+                    Label("Pair this iPhone before resuming or restoring the session.", systemImage: "iphone.and.arrow.forward")
+                        .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(value)")
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var modeTitle: LocalizedStringKey {
+        if recovery.movement?.isJoystick == true { return "Joystick" }
+        if let mode = recovery.movement?.mode { return LocalizedStringKey(mode.title) }
+        return recovery.isWalkingRoute ? "Walking" : "Fixed Location"
+    }
+
+    private var modeSymbol: String {
+        if recovery.movement?.isJoystick == true { return "gamecontroller" }
+        return recovery.movement?.mode.symbol ?? (recovery.isWalkingRoute ? "figure.walk" : "mappin")
+    }
+
+    private var resumeTitle: LocalizedStringKey {
+        if recovery.movement?.isJoystick == true { return "Resume Joystick" }
+        if recovery.movement?.route != nil || recovery.isWalkingRoute { return "Resume Route" }
+        return "Resume Location"
+    }
+
+    private func detail(_ title: LocalizedStringKey, value: Text, symbol: String) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline, spacing: 8))
+        return Label {
+            layout {
+                Text(title).foregroundStyle(.secondary)
+                value.fontWeight(.semibold).fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(Color.accentColor)
+        }
+        .font(.subheadline)
+        .accessibilityElement(children: .combine)
     }
 }

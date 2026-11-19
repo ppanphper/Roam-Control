@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct UsageStatisticsPrivacyView: View {
+    @Environment(\.appLocalization) private var l10n
     var body: some View {
         List {
             Section {
@@ -19,16 +20,21 @@ struct UsageStatisticsPrivacyView: View {
                 privacyRow("App version and build", symbol: "number")
                 privacyRow("Introduction completed", symbol: "sparkles")
                 privacyRow("Pairing completed", symbol: "iphone.and.arrow.forward")
-                privacyRow("Fixed or walking session started", symbol: "figure.walk")
+                privacyRow("Fixed, route or joystick session started", symbol: "figure.walk")
                 privacyRow("Active location updated", symbol: "location.fill")
             }
 
-            Section("Never Shared") {
+            Section("Never Included in Statistics") {
                 privacyRow("Coordinates or place names", symbol: "mappin.slash")
                 privacyRow("Searches, favourites, history or routes", symbol: "magnifyingglass")
                 privacyRow("Pairing records or PINs", symbol: "key.slash")
                 privacyRow("Apple ID, device name or personal details", symbol: "person.crop.circle.badge.xmark")
                 privacyRow("Diagnostic reports", symbol: "doc.text.magnifyingglass")
+            }
+
+            Section("Maps and Files") {
+                Text("Place search, reverse lookup and Apple Maps directions use Apple's online services independently of the statistics switch. This build does not add a third-party search provider or an install-country counter.")
+                Text("Backups and GPX files contain coordinates. Diagnostic reports stay on this iPhone until you review and share them; including location details is optional.")
             }
 
             Section("Storage and Control") {
@@ -45,11 +51,11 @@ struct UsageStatisticsPrivacyView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Anonymous Statistics")
+        .navigationTitle(Text(verbatim: l10n.text("Anonymous Statistics")))
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func privacyRow(_ title: String, symbol: String) -> some View {
+    private func privacyRow(_ title: LocalizedStringKey, symbol: String) -> some View {
         Label(title, systemImage: symbol)
     }
 }

@@ -1,0 +1,19 @@
+Baseline: 402ff6fb9bad17746a2a7883a944c43a5c2f4974; source unchanged.
+Date: 2026-11-18 America/Los_Angeles
+Command (from worktree root):
+xcodebuild -project RoamControl.xcodeproj -scheme RoamControl -configuration Debug -destination "generic/platform=iOS" -derivedDataPath work/version-alignment/DerivedData CODE_SIGNING_ALLOWED=NO build
+Exit code: 65
+
+Xcode 26.2
+Build version 17C52
+
+Diagnostics (all error/warning/build-result lines):
+RoamControl/Services/Pairing/OnDevicePairingCoordinator.swift:114:50: error: 'submitTaskRequest' has been renamed to 'submit(_:)'
+RoamControl/Services/Pairing/OnDevicePairingCoordinator.swift:114:21: warning: no 'async' operations occur within 'await' expression
+RoamControl.xcodeproj: warning: The iOS deployment target 'IPHONEOS_DEPLOYMENT_TARGET' is set to 27.0, but the range of supported deployment target versions is 12.0 to 26.2.99. (in target 'RoamControl' from project 'RoamControl')
+** BUILD FAILED **
+
+Full local log: work/version-alignment/baseline-build.log
+SHA-256: 3471af20f74649e578ebbef176ce0ac9e727b704c8ecf0cb114e1036cfd57455
+
+No app-source fixes, deployment-target override, signing, installation or device testing performed.

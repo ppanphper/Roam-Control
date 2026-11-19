@@ -1,0 +1,48 @@
+{
+  "recorded_at": "2026-11-18T19:18:02.756616-08:00",
+  "audit_source_unchanged": true,
+  "changed_since_audit_started": [],
+  "configuration": "Release",
+  "simulator": {
+    "name": "Roam Alignment iPhone 13 Pro",
+    "udid": "037070A9-B9A1-4988-B6DE-8B1E381BF519",
+    "os": "26.2"
+  },
+  "physical_device_operations": false,
+  "workflow": [
+    "first launch",
+    "onboarding",
+    "device setup entry",
+    "home",
+    "terminate and relaunch",
+    "settings"
+  ],
+  "artifacts": [
+    {
+      "path": "work/claude-audit-20261118/release-simulator-build.log",
+      "sha256": "d9b2bdc48a505f2291ff05b4599ff12e71bd9299f7eb8a3e33f6fbaa5f134c46"
+    },
+    {
+      "path": "work/claude-audit-20261118/release-launch-tests.log",
+      "sha256": "a591087cb66fcc65fd37f362d81472eb5d17426bf0566745982d5e6555e5121f"
+    },
+    {
+      "path": "work/claude-audit-20261118/release-ui/UITests/ReleaseLaunchTests.swift",
+      "sha256": "2efad87231ba56d325c0f84b9850a51c4fe80cc7abbf506ef4f9f182c80ea386"
+    },
+    {
+      "path": "work/claude-audit-20261118/release-ui/project.yml",
+      "sha256": "e1f5679b49502eb15e609e5c56e0ae3bcc5be035b3e0dca2ada87267f9baa8a0"
+    }
+  ],
+  "release-simulator-build.log": [
+    "** BUILD SUCCEEDED **"
+  ],
+  "release-launch-tests.log": [
+    "Test Case '-[RoamUITests.ReleaseLaunchTests testReleaseOnboardingSetupAndRelaunch]' passed (16.278 seconds).",
+    "\t Executed 1 test, with 0 failures (0 unexpected) in 16.278 (16.281) seconds",
+    "\t Executed 1 test, with 0 failures (0 unexpected) in 16.278 (16.284) seconds",
+    "\t Executed 1 test, with 0 failures (0 unexpected) in 16.278 (16.286) seconds",
+    "** TEST SUCCEEDED **"
+  ]
+}

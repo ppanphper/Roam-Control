@@ -1,3 +1,7 @@
+> **个人 fork 开发版：0.9.9 Build 31。** 当前工作针对 iOS 26.5.2、无付费会员、LiveContainer + 外部 LocalDevVPN，使用独立标识 `com.ppanphper.roamcontrol` / `Roam Control Dev`。功能和验证状态见 [完整对齐交付记录](docs/version-alignment/implementation-status.md)，构建及手机验收见 [构建与验收](docs/version-alignment/build-and-device-validation.md)。这是基于公开功能描述独立实现的个人开发版，实际手机表现待用户验收。
+>
+> 下方保留原 0.9.0 项目介绍及历史截图；旧版号、系统要求和安装说明不代表本次个人测试包。当前许可证和历史许可文件均保留。
+
 <p align="center">
   <img src="Design/RoamControl-AppIcon-v2-source.png" width="128" height="128" alt="Roam Control app icon">
 </p>

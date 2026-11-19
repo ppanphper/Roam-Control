@@ -12,7 +12,11 @@ crate-type = ["staticlib"]
 
 [dependencies]
 idevice = { git = "https://github.com/jkcoxson/idevice.git", rev = "2bc58aaea40c9ced0167c8e7b512ee13c34c760f", default-features = false, features = ["dvt", "location_simulation", "remote_pairing", "rsd", "rustcrypto", "tcp", "tunnel_tcp_stack"] }
+plist = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+libc = "0.2"
 
 [profile.release]
 codegen-units = 1

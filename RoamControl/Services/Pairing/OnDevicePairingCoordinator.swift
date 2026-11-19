@@ -2,6 +2,7 @@ import BackgroundTasks
 import Foundation
 import Observation
 import RoamPairingFFI
+import UIKit
 
 struct PairedDeviceDetails: Equatable, Sendable {
     let name: String
@@ -27,13 +28,19 @@ final class OnDevicePairingCoordinator {
 
     static let shared = OnDevicePairingCoordinator()
 
-    private static var taskIdentifierPrefix: String {
-        BackgroundTaskIdentifier.prefix(for: "pairing")
-    }
-
     private(set) var phase: OnDevicePairingPhase = .idle
+    private(set) var executionMode: SessionExecutionMode = .inactive
+    private(set) var expiryMessage: String?
 
     private let publisher = PairingBonjourPublisher()
+    private let notifications = PairingNotifications()
+    private var localization = AppLocalization(language: AppLanguage(preference: "system"))
+    private var pairingAttemptIdentifier: UUID?
+    private var foregroundLease: UIBackgroundTaskIdentifier = .invalid
+    private var foregroundLeaseDeadline: Task<Void, Never>?
+    private var expirySubmission = PairingExpirySubmission<UUID>()
+    private var expirySubmissionDeadline: Task<Void, Never>?
+    private var didEnterBackground: (any NSObjectProtocol)?
     private var activeSession: OpaquePointer?
     private var activeRunIdentifier: UUID?
     private var submittedTaskIdentifier: String?
@@ -41,11 +48,11 @@ final class OnDevicePairingCoordinator {
     private var recordStore: RecordStore?
     private var cancellationRequested = false
     private var pendingFailureMessage: String?
-    private var backgroundTaskFinished = true
+    private var backgroundLaunchTimeout: Task<Void, Never>?
     private var workerIsRunning = false
 
     var isRunning: Bool {
-        workerIsRunning || phase == .preparing
+        workerIsRunning || expirySubmission.isPending || phase == .preparing || phase == .storing
     }
 
     var isAvailableOnThisDevice: Bool {
@@ -63,6 +70,19 @@ final class OnDevicePairingCoordinator {
         publisher.onFailure = { [weak self] in
             self?.advertisementDidFail()
         }
+        didEnterBackground = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showCurrentPINNotification() }
+        }
+    }
+
+    func requestNotificationPermission() async {
+        await notifications.requestPermission()
+    }
+
+    func setLocalization(_ localization: AppLocalization) {
+        self.localization = localization
     }
 
     func start(storeRecord: @escaping RecordStore) {
@@ -74,10 +94,18 @@ final class OnDevicePairingCoordinator {
 
         cancellationRequested = false
         pendingFailureMessage = nil
+        pairingAttemptIdentifier = UUID()
+        expiryMessage = nil
+        notifications.clearPIN()
+        notifications.clearExpiry()
         recordStore = storeRecord
         phase = .preparing
 
-        let identifier = "\(Self.taskIdentifierPrefix).\(UUID().uuidString)"
+        guard let prefix = BackgroundTaskIdentifier.prefix(for: "pairing") else {
+            beginForegroundPairing()
+            return
+        }
+        let identifier = "\(prefix).\(UUID().uuidString)"
         let wasRegistered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: identifier,
             using: .main
@@ -88,55 +116,59 @@ final class OnDevicePairingCoordinator {
             }
 
             MainActor.assumeIsolated {
-                Self.shared.beginPairing(with: task)
+                Self.shared.beginPairing(with: task, identifier: identifier)
             }
         }
 
         guard wasRegistered else {
-            recordStore = nil
-            phase = .failed(
-                "iOS could not register the secure pairing task. Close Roam Control, reopen it, and try again."
-            )
+            beginForegroundPairing()
             return
         }
 
         submittedTaskIdentifier = identifier
-
+        executionMode = .waitingForSystem
         let request = BGContinuedProcessingTaskRequest(
             identifier: identifier,
             title: "Roam Control",
             subtitle: "Preparing secure pairing…"
         )
         request.strategy = .fail
-
-        Task {
-            do {
-                try await BGTaskScheduler.shared.submitTaskRequest(request)
-            } catch {
-                submittedTaskIdentifier = nil
-                recordStore = nil
-                phase = .failed(
-                    "iOS could not keep pairing active in the background. Keep Roam Control open and try again."
-                )
-            }
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            beginForegroundPairing()
+            return
+        }
+        backgroundLaunchTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self, self.submittedTaskIdentifier == identifier,
+                  self.backgroundTask == nil else { return }
+            self.beginForegroundPairing()
         }
     }
 
     func cancel() {
+        // Once the iPhone has paired, let the Keychain transaction finish.
+        guard phase != .storing else { return }
         guard isRunning else {
+            notifications.clearExpiry()
+            expiryMessage = nil
             phase = .idle
             return
         }
 
         cancellationRequested = true
-        phase = .cancelling
+        notifications.clearPIN()
+        notifications.clearExpiry()
         publisher.stop()
-
         if let activeSession {
+            phase = .cancelling
             rc_remote_pairing_session_cancel(activeSession)
-        }
-        if let submittedTaskIdentifier {
-            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: submittedTaskIdentifier)
+        } else {
+            recordStore = nil
+            cancellationRequested = false
+            finishBackgroundTask(success: false)
+            phase = .idle
         }
     }
 
@@ -147,19 +179,60 @@ final class OnDevicePairingCoordinator {
         }
     }
 
-    private func beginPairing(with task: BGContinuedProcessingTask) {
-        guard phase == .preparing, !workerIsRunning else {
+    private func beginForegroundPairing() {
+        guard phase == .preparing, !workerIsRunning else { return }
+        finishBackgroundTask(success: false)
+        executionMode = .foregroundOnly
+        beginForegroundLease()
+        runNativePairing()
+    }
+
+    private func beginForegroundLease() {
+        guard let pairingAttemptIdentifier else { return }
+        foregroundLease = UIApplication.shared.beginBackgroundTask(withName: "Roam Control Pairing") { [weak self] in
+            // UIKit invokes this handler on the main thread. Submit the notice
+            // and end the UIKit lease inside this callback, before suspension.
+            MainActor.assumeIsolated {
+                guard let self, self.pairingAttemptIdentifier == pairingAttemptIdentifier,
+                      self.foregroundLease != .invalid else { return }
+                self.pairingTaskExpired(endingLeaseImmediately: true)
+            }
+        }
+        guard foregroundLease != .invalid else { return }
+        // The native waits total up to three minutes. Never keep a UIKit lease
+        // beyond that bounded pairing window, even if iOS doesn't expire it.
+        foregroundLeaseDeadline = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(180))
+            guard !Task.isCancelled, let self, self.pairingAttemptIdentifier == pairingAttemptIdentifier else { return }
+            self.pairingTaskExpired()
+        }
+    }
+
+    private func endForegroundLease() {
+        foregroundLeaseDeadline?.cancel()
+        foregroundLeaseDeadline = nil
+        guard foregroundLease != .invalid else { return }
+        let lease = foregroundLease
+        foregroundLease = .invalid
+        UIApplication.shared.endBackgroundTask(lease)
+    }
+
+    private func beginPairing(with task: BGContinuedProcessingTask, identifier: String) {
+        guard submittedTaskIdentifier == identifier, phase == .preparing, !workerIsRunning else {
             task.setTaskCompleted(success: false)
             return
         }
 
+        backgroundLaunchTimeout?.cancel()
+        backgroundLaunchTimeout = nil
         backgroundTask = task
-        backgroundTaskFinished = false
+        executionMode = .background
         task.progress.totalUnitCount = 100
         task.progress.completedUnitCount = 5
         task.expirationHandler = { [weak self] in
             Task { @MainActor in
-                self?.pairingTaskExpired()
+                guard let self, self.submittedTaskIdentifier == identifier else { return }
+                self.pairingTaskExpired(endingLeaseImmediately: true)
             }
         }
 
@@ -178,7 +251,8 @@ final class OnDevicePairingCoordinator {
         workerIsRunning = true
 
         let sessionBits = UInt(bitPattern: session)
-        let contextBits = UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())
+        let callbackContext = PairingCallbackContext(coordinator: self, runIdentifier: runIdentifier)
+        let contextBits = UInt(bitPattern: Unmanaged.passRetained(callbackContext).toOpaque())
 
         DispatchQueue.global(qos: .userInitiated).async {
             guard
@@ -203,25 +277,27 @@ final class OnDevicePairingCoordinator {
 
             let outcome = NativePairingOutcome(result: result, returnCode: returnCode)
             rc_remote_pairing_result_destroy(&result)
-            rc_remote_pairing_session_destroy(session)
-
             DispatchQueue.main.async {
-                let coordinator = Unmanaged<OnDevicePairingCoordinator>
-                    .fromOpaque(context)
-                    .takeRetainedValue()
-                coordinator.nativePairingFinished(outcome, runIdentifier: runIdentifier)
+                if let session = OpaquePointer(bitPattern: sessionBits) {
+                    rc_remote_pairing_session_destroy(session)
+                }
+                guard let context = UnsafeMutableRawPointer(bitPattern: contextBits) else { return }
+                let callback = Unmanaged<PairingCallbackContext>.fromOpaque(context).takeRetainedValue()
+                callback.coordinator.nativePairingFinished(outcome, runIdentifier: runIdentifier)
             }
         }
     }
 
-    fileprivate func publish(_ advertisement: PairingAdvertisement) {
-        guard workerIsRunning, !cancellationRequested else { return }
+    fileprivate func publish(_ advertisement: PairingAdvertisement, runIdentifier: UUID) {
+        guard activeRunIdentifier == runIdentifier, phase == .preparing,
+              !cancellationRequested, pendingFailureMessage == nil else { return }
         publisher.publish(advertisement)
     }
 
-    fileprivate func presentPIN(_ pin: String) {
-        guard workerIsRunning, !cancellationRequested else { return }
+    fileprivate func presentPIN(_ pin: String, runIdentifier: UUID) {
+        guard activeRunIdentifier == runIdentifier, !cancellationRequested, pendingFailureMessage == nil else { return }
         phase = .showingPIN(pin)
+        showCurrentPINNotification()
         backgroundTask?.progress.completedUnitCount = 55
         backgroundTask?.updateTitle(
             "Roam Control pairing code",
@@ -229,8 +305,13 @@ final class OnDevicePairingCoordinator {
         )
     }
 
+    private func showCurrentPINNotification() {
+        guard let pairingAttemptIdentifier, case .showingPIN(let pin) = phase else { return }
+        notifications.showPIN(pin, attempt: pairingAttemptIdentifier, localization: localization)
+    }
+
     private func advertisementDidPublish() {
-        guard workerIsRunning, !cancellationRequested else { return }
+        guard workerIsRunning, phase == .preparing, !cancellationRequested else { return }
         phase = .waitingForSettings
         backgroundTask?.progress.completedUnitCount = 25
         backgroundTask?.updateTitle(
@@ -240,7 +321,7 @@ final class OnDevicePairingCoordinator {
     }
 
     private func advertisementDidFail() {
-        guard workerIsRunning, !cancellationRequested else { return }
+        guard workerIsRunning, !cancellationRequested, pendingFailureMessage == nil else { return }
         fail(
             "Local Network access is required. Enable it in Settings › Apps › Roam Control, then try again."
         )
@@ -256,6 +337,7 @@ final class OnDevicePairingCoordinator {
         activeSession = nil
         workerIsRunning = false
         publisher.stop()
+        notifications.clearPIN()
 
         if let pendingFailureMessage {
             self.pendingFailureMessage = nil
@@ -287,6 +369,8 @@ final class OnDevicePairingCoordinator {
                 do {
                     _ = try await recordStore(record, hostAltIRK)
                     self.recordStore = nil
+                    self.expiryMessage = nil
+                    self.notifications.clearExpiry()
                     self.phase = .success(device)
                     self.backgroundTask?.progress.completedUnitCount = 100
                     self.backgroundTask?.updateTitle(
@@ -295,23 +379,60 @@ final class OnDevicePairingCoordinator {
                     )
                     self.finishBackgroundTask(success: true)
                 } catch {
-                    self.fail(error.localizedDescription)
+                    self.fail(self.expiryMessage ?? error.localizedDescription)
                 }
             }
 
+        case .expired:
+            pairingTaskExpired()
         case .failure(let message):
             fail(message)
         }
     }
 
-    private func pairingTaskExpired() {
-        cancellationRequested = false
-        pendingFailureMessage = "Pairing took too long. Return to Roam Control and try again."
-        if let activeSession {
-            rc_remote_pairing_session_cancel(activeSession)
+    private func pairingTaskExpired(endingLeaseImmediately: Bool = false) {
+        defer { if endingLeaseImmediately { finishBackgroundTask(success: false, immediate: true) } }
+        // A native timeout and a system expiration may arrive for the same attempt.
+        guard expiryMessage == nil else { return }
+        let stage: PairingExpiryStage
+        switch phase {
+        case .preparing: stage = .preparing
+        case .waitingForSettings: stage = .waitingForSettings
+        case .showingPIN: stage = .showingPIN
+        case .storing: stage = .storing
+        case .idle, .cancelling, .success, .failed:
+            finishBackgroundTask(success: false)
+            return
         }
-        publisher.stop()
-        phase = .failed(pendingFailureMessage ?? "Pairing took too long. Please try again.")
+        let message = stage.message
+        expiryMessage = message
+        notifications.clearPIN()
+        if let attempt = pairingAttemptIdentifier {
+            if !endingLeaseImmediately {
+                expirySubmission.submit(for: attempt)
+                // Don't retain a grant indefinitely if the notification server
+                // never completes the request.
+                expirySubmissionDeadline = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(3))
+                    guard !Task.isCancelled else { return }
+                    self?.expiryNotificationFinished(for: attempt)
+                }
+            }
+            notifications.showExpiry(message, attempt: attempt, localization: localization) { [weak self] in
+                self?.expiryNotificationFinished(for: attempt)
+            }
+        }
+        if phase == .storing {
+            // Storage may already be committing. Its real result can replace
+            // this notice when the app can run again.
+            finishBackgroundTask(success: false)
+        } else {
+            fail(message)
+        }
+    }
+
+    private func expiryNotificationFinished(for attempt: UUID) {
+        guard pairingAttemptIdentifier == attempt, expirySubmission.complete(for: attempt) else { return }
         finishBackgroundTask(success: false)
     }
 
@@ -321,18 +442,31 @@ final class OnDevicePairingCoordinator {
             rc_remote_pairing_session_cancel(activeSession)
         }
         publisher.stop()
+        notifications.clearPIN()
         recordStore = nil
         phase = .failed(message)
         finishBackgroundTask(success: false)
     }
 
-    private func finishBackgroundTask(success: Bool) {
-        guard !backgroundTaskFinished else { return }
-        backgroundTaskFinished = true
-        backgroundTask?.setTaskCompleted(success: success)
+    private func finishBackgroundTask(success: Bool, immediate: Bool = false) {
+        guard immediate || success || !expirySubmission.isPending else { return }
+        expirySubmission.clear()
+        expirySubmissionDeadline?.cancel()
+        expirySubmissionDeadline = nil
+        endForegroundLease()
+        backgroundLaunchTimeout?.cancel()
+        backgroundLaunchTimeout = nil
+        if let task = backgroundTask {
+            task.expirationHandler = nil
+            task.setTaskCompleted(success: success)
+        } else if let submittedTaskIdentifier {
+            BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: submittedTaskIdentifier)
+        }
         backgroundTask = nil
         submittedTaskIdentifier = nil
+        executionMode = .inactive
     }
+
 }
 
 fileprivate struct PairingAdvertisement: Sendable {
@@ -348,8 +482,13 @@ private enum NativePairingOutcome: Sendable {
         device: PairedDeviceDetails
     )
     case failure(String)
+    case expired
 
     init(result: RCRemotePairingResult, returnCode: Int32) {
+        guard returnCode != 3 else {
+            self = .expired
+            return
+        }
         guard returnCode == 0 else {
             let message = Self.string(from: result.error_message)
             self = .failure(message.isEmpty ? "The iPhone could not finish pairing." : message)
@@ -409,8 +548,8 @@ private final class PairingBonjourPublisher: NSObject, NetServiceDelegate {
         service.delegate = self
         service.setTXTRecord(NetService.data(fromTXTRecord: advertisement.textRecords))
         service.schedule(in: .main, forMode: .common)
-        service.publish()
         self.service = service
+        service.publish()
     }
 
     func stop() {
@@ -422,14 +561,26 @@ private final class PairingBonjourPublisher: NSObject, NetServiceDelegate {
 
     nonisolated func netServiceDidPublish(_ sender: NetService) {
         MainActor.assumeIsolated {
+            guard service === sender else { return }
             onPublished?()
         }
     }
 
     nonisolated func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
         MainActor.assumeIsolated {
+            guard service === sender else { return }
             onFailure?()
         }
+    }
+}
+
+private final class PairingCallbackContext {
+    let coordinator: OnDevicePairingCoordinator
+    let runIdentifier: UUID
+
+    init(coordinator: OnDevicePairingCoordinator, runIdentifier: UUID) {
+        self.coordinator = coordinator
+        self.runIdentifier = runIdentifier
     }
 }
 
@@ -458,14 +609,11 @@ private let remotePairingReadyCallback: RCRemotePairingReadyCallback = {
         port: Int32(port),
         textRecords: textRecords
     )
-    let contextBits = UInt(bitPattern: context)
-
+    let callback = Unmanaged<PairingCallbackContext>.fromOpaque(context).takeUnretainedValue()
+    let coordinator = callback.coordinator
+    let runIdentifier = callback.runIdentifier
     DispatchQueue.main.async {
-        guard let context = UnsafeMutableRawPointer(bitPattern: contextBits) else { return }
-        let coordinator = Unmanaged<OnDevicePairingCoordinator>
-            .fromOpaque(context)
-            .takeUnretainedValue()
-        coordinator.publish(advertisement)
+        coordinator.publish(advertisement, runIdentifier: runIdentifier)
     }
 }
 
@@ -473,12 +621,10 @@ private let remotePairingPINCallback: RCRemotePairingPINCallback = { context, pi
     guard let context, let pin else { return }
 
     let value = String(cString: pin)
-    let contextBits = UInt(bitPattern: context)
+    let callback = Unmanaged<PairingCallbackContext>.fromOpaque(context).takeUnretainedValue()
+    let coordinator = callback.coordinator
+    let runIdentifier = callback.runIdentifier
     DispatchQueue.main.async {
-        guard let context = UnsafeMutableRawPointer(bitPattern: contextBits) else { return }
-        let coordinator = Unmanaged<OnDevicePairingCoordinator>
-            .fromOpaque(context)
-            .takeUnretainedValue()
-        coordinator.presentPIN(value)
+        coordinator.presentPIN(value, runIdentifier: runIdentifier)
     }
 }

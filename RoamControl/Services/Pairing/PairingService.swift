@@ -17,7 +17,7 @@ protocol PairingService: Sendable {
 }
 
 actor SecurePairingService: PairingService {
-    private let keychainService = "com.sean.roamcontrol.rppairing"
+    private let keychainService = "com.ppanphper.roamcontrol.rppairing"
     private let keychainAccount = "current-device"
 
     func storedRecord() throws -> PairingRecordSummary? {
@@ -56,7 +56,9 @@ actor SecurePairingService: PairingService {
     }
 
     func pairingRecordData() throws -> Data? {
-        try readStoredRecord()?.data
+        guard let stored = try readStoredRecord() else { return nil }
+        _ = try Self.validate(stored.data, importedAt: stored.importedAt)
+        return stored.data
     }
 
     func removeRecord() throws {
@@ -143,8 +145,8 @@ actor SecurePairingService: PairingService {
             throw PairingServiceError.notRPPairing
         }
 
-        if let altIRK = dictionary["alt_irk"] as? Data, altIRK.count != 16 {
-            throw PairingServiceError.notRPPairing
+        guard let altIRK = dictionary["alt_irk"] as? Data, altIRK.count == 16 else {
+            throw PairingServiceError.invalidDeviceIdentity
         }
 
         do {
@@ -180,6 +182,7 @@ enum PairingServiceError: LocalizedError {
     case notRPPairing
     case keyMismatch
     case invalidHostIdentity
+    case invalidDeviceIdentity
     case corruptStoredRecord
     case keychain(OSStatus)
 
@@ -193,6 +196,8 @@ enum PairingServiceError: LocalizedError {
             "The pairing file's public and private keys do not match."
         case .invalidHostIdentity:
             "The generated pairing identity was not valid."
+        case .invalidDeviceIdentity:
+            "The RPPairing file needs a valid device identity (alt_irk). Generate and import a new RPPairing file for this iPhone."
         case .corruptStoredRecord:
             "The stored pairing record could not be read."
         case .keychain(let status):

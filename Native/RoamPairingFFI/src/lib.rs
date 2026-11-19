@@ -1,3 +1,5 @@
+mod location_dtx;
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -7,22 +9,28 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use idevice::dvt::{
-    location_simulation::LocationSimulationClient, remote_server::RemoteServerClient,
+    message::AuxValue,
+    remote_server::Channel,
 };
 use idevice::remote_pairing::{
     PairableHost, PairableHostInfo, PeerDevice, RemotePairingClient, RpPairingFile,
     RpPairingSocket, connect_tls_psk_tunnel_native,
 };
 use idevice::rsd::RsdHandshake;
-use idevice::{RsdService, tcp};
-use tokio::net::{TcpListener, TcpStream};
+use location_dtx::{CommandError, LocationDtx, LocationRequests};
+use idevice::{ReadWrite, RsdService, tcp};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::time::{Instant, sleep, timeout};
 
 const DEFAULT_HOST_NAME: &str = "Roam Control";
 const DEFAULT_HOST_MODEL: &str = "Mac17,7";
 const CANCELLED_ERROR: &str = "Pairing was cancelled.";
-const LOCATION_CANCELLED_ERROR: &str = "The location session was stopped.";
 const SESSION_TIMEOUT: Duration = Duration::from_secs(15);
+const LOCATION_CONNECT_TIMEOUT: Duration = Duration::from_secs(35);
+const LOCATION_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+const PAIRING_ACCEPT_TIMEOUT: Duration = Duration::from_secs(90);
+const PAIRING_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(90);
+const LOCATION_CHANNEL: &str = "com.apple.instruments.server.services.LocationSimulation";
 
 pub type ReadyCallback = Option<
     extern "C" fn(
@@ -46,6 +54,8 @@ pub struct RemotePairingSession {
 pub struct LocationSession {
     cancelled: Arc<AtomicBool>,
     coordinates: Arc<Mutex<LocationCoordinates>>,
+    // Once a write may have reached the device, a panic cannot be reported as a clean cancellation.
+    needs_clear: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,6 +96,47 @@ pub struct RemotePairingResult {
 #[repr(C)]
 pub struct LocationResult {
     pub error_message: *mut c_char,
+    pub clear_status: LocationClearStatus,
+    pub retryable: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocationClearStatus {
+    NotNeeded = 0,
+    Confirmed = 1,
+    Unconfirmed = 2,
+}
+
+impl LocationResult {
+    fn empty() -> Self {
+        Self {
+            error_message: ptr::null_mut(),
+            clear_status: LocationClearStatus::NotNeeded,
+            retryable: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct LocationFailure {
+    message: String,
+    retryable: bool,
+}
+
+impl LocationFailure {
+    fn new(message: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            message: message.into(),
+            retryable,
+        }
+    }
+}
+
+impl From<String> for LocationFailure {
+    fn from(message: String) -> Self {
+        Self::new(message, false)
+    }
 }
 
 pub type LocationStartedCallback = Option<extern "C" fn(context: *mut c_void)>;
@@ -152,7 +203,6 @@ pub unsafe extern "C" fn rc_remote_pairing_session_run(
     unsafe { *result = RemotePairingResult::empty() };
 
     let session = unsafe { &*session };
-    session.cancelled.store(false, Ordering::Release);
 
     let host_name = unsafe { optional_c_string(host_name, DEFAULT_HOST_NAME) };
     let host_model = unsafe { optional_c_string(host_model, DEFAULT_HOST_MODEL) };
@@ -168,7 +218,7 @@ pub unsafe extern "C" fn rc_remote_pairing_session_run(
             .worker_threads(2)
             .enable_all()
             .build()
-            .map_err(|_| "Roam Control could not start its pairing engine.".to_string())?;
+            .map_err(|_| "Roam Control could not start its pairing engine.")?;
 
         runtime.block_on(run_pairing(host_name, host_model, callbacks, cancellation))
     }));
@@ -178,7 +228,8 @@ pub unsafe extern "C" fn rc_remote_pairing_session_run(
             unsafe { write_success(&mut *result, completed) };
             0
         }
-        Ok(Err(message)) => {
+        Ok(Err(PairingFailure::Expired)) => 3,
+        Ok(Err(PairingFailure::Other(message))) => {
             unsafe { (*result).error_message = owned_c_string(message) };
             1
         }
@@ -247,7 +298,7 @@ pub unsafe extern "C" fn rc_pairing_record_matches_service(
         let Ok(pairing_file) = RpPairingFile::from_bytes(pairing_record) else {
             return false;
         };
-        let Some(alt_irk) = pairing_file.alt_irk() else {
+        let Some(alt_irk) = device_identity(&pairing_file) else {
             return false;
         };
         let Ok(service_identifier) = (unsafe { CStr::from_ptr(service_identifier) }).to_str()
@@ -272,6 +323,7 @@ pub extern "C" fn rc_location_session_create() -> *mut LocationSession {
             latitude: 0.0,
             longitude: 0.0,
         })),
+        needs_clear: Arc::new(AtomicBool::new(false)),
     }))
 }
 
@@ -307,11 +359,13 @@ pub unsafe extern "C" fn rc_location_session_run(
     pairing_record: *const u8,
     pairing_record_length: usize,
     peer_address: *const c_char,
+    tunnel_interface_index: u32,
     remote_pairing_port: u16,
     service_identifier: *const c_char,
     auth_tag: *const c_char,
     latitude: f64,
     longitude: f64,
+    clear_only: i32,
     started_callback: LocationStartedCallback,
     context: *mut c_void,
     result: *mut LocationResult,
@@ -324,12 +378,11 @@ pub unsafe extern "C" fn rc_location_session_run(
         return 2;
     }
 
-    unsafe {
-        (*result).error_message = ptr::null_mut();
-    }
+    unsafe { *result = LocationResult::empty() };
 
     let session = unsafe { &*session };
-    session.cancelled.store(false, Ordering::Release);
+    let clear_only = clear_only != 0;
+    let needs_clear = Arc::clone(&session.needs_clear);
     let pairing_record =
         unsafe { std::slice::from_raw_parts(pairing_record, pairing_record_length).to_vec() };
     let peer_address = unsafe { optional_c_string(peer_address, "10.7.0.1") };
@@ -350,32 +403,60 @@ pub unsafe extern "C" fn rc_location_session_run(
             .worker_threads(3)
             .enable_all()
             .build()
-            .map_err(|_| "Roam Control could not start its device session.".to_string())?;
+            .map_err(|_| {
+                LocationFailure::new("Roam Control could not start its device session.", false)
+            });
 
+        let runtime = match runtime {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                return (
+                    Err(error),
+                    if clear_only {
+                        LocationClearStatus::Unconfirmed
+                    } else {
+                        LocationClearStatus::NotNeeded
+                    },
+                );
+            }
+        };
         runtime.block_on(run_location_session(
             pairing_record,
             peer_address,
+            tunnel_interface_index,
             remote_pairing_port,
             service_identifier,
             auth_tag,
             coordinates,
+            clear_only,
+            Arc::clone(&needs_clear),
             started_callback,
             callback_context,
             cancellation,
         ))
     }));
 
-    match execution {
-        Ok(Ok(())) => 0,
-        Ok(Err(message)) => {
-            unsafe { (*result).error_message = owned_c_string(message) };
-            1
-        }
-        Err(_) => {
-            unsafe {
-                (*result).error_message =
-                    owned_c_string("The location session stopped unexpectedly.");
-            }
+    let fallback_status = if clear_only || needs_clear.load(Ordering::Acquire) {
+        LocationClearStatus::Unconfirmed
+    } else {
+        LocationClearStatus::NotNeeded
+    };
+    let (outcome, status) = execution.unwrap_or_else(|_| {
+        (
+            Err(LocationFailure::new(
+                "The location session stopped unexpectedly.",
+                false,
+            )),
+            fallback_status,
+        )
+    });
+    let result = unsafe { &mut *result };
+    result.clear_status = status;
+    match outcome {
+        Ok(()) => 0,
+        Err(failure) => {
+            result.retryable = i32::from(failure.retryable);
+            result.error_message = owned_c_string(failure.message);
             1
         }
     }
@@ -389,7 +470,7 @@ pub unsafe extern "C" fn rc_location_result_destroy(result: *mut LocationResult)
     if !result.error_message.is_null() {
         unsafe { drop(CString::from_raw(result.error_message)) };
     }
-    result.error_message = ptr::null_mut();
+    *result = LocationResult::empty();
 }
 
 #[unsafe(no_mangle)]
@@ -399,14 +480,27 @@ pub unsafe extern "C" fn rc_location_session_destroy(session: *mut LocationSessi
     }
 }
 
+enum PairingFailure {
+    Other(String),
+    Expired,
+}
+
+impl From<String> for PairingFailure {
+    fn from(message: String) -> Self { Self::Other(message) }
+}
+
+impl From<&str> for PairingFailure {
+    fn from(message: &str) -> Self { Self::Other(message.to_owned()) }
+}
+
 async fn run_pairing(
     host_name: String,
     host_model: String,
     callbacks: CallbackSet,
     cancellation: Arc<AtomicBool>,
-) -> Result<CompletedPairing, String> {
+) -> Result<CompletedPairing, PairingFailure> {
     if cancellation.load(Ordering::Acquire) {
-        return Err(CANCELLED_ERROR.to_string());
+        return Err(CANCELLED_ERROR.into());
     }
 
     let listener = TcpListener::bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0))
@@ -425,11 +519,12 @@ async fn run_pairing(
     publish_ready_callback(&callbacks, &service_identifier, port, &host_info);
 
     let (stream, _) = tokio::select! {
-        accepted = listener.accept() => {
-            accepted.map_err(|_| "The iPhone could not connect to Roam Control.".to_string())?
+        accepted = timeout(PAIRING_ACCEPT_TIMEOUT, listener.accept()) => {
+            accepted.map_err(|_| PairingFailure::Expired)?
+                .map_err(|_| "The iPhone could not connect to Roam Control.".to_string())?
         }
         _ = wait_for_cancellation(Arc::clone(&cancellation)) => {
-            return Err(CANCELLED_ERROR.to_string());
+            return Err(CANCELLED_ERROR.into());
         }
     };
 
@@ -439,17 +534,18 @@ async fn run_pairing(
     let mut pairable_host = PairableHost::new(socket, host_info);
 
     let peer = tokio::select! {
-        outcome = pairable_host.accept(&mut pairing_record, move |pin| async move {
+        outcome = timeout(PAIRING_HANDSHAKE_TIMEOUT, pairable_host.accept(&mut pairing_record, move |pin| async move {
             if let Some(callback) = pin_callback
                 && let Ok(pin) = CString::new(pin)
             {
                 callback(callback_context as *mut c_void, pin.as_ptr());
             }
-        }) => {
-            outcome.map_err(|error| friendly_pairing_error(&error.to_string()))?
+        })) => {
+            outcome.map_err(|_| PairingFailure::Expired)?
+                .map_err(|error| friendly_pairing_error(&error.to_string()))?
         }
         _ = wait_for_cancellation(Arc::clone(&cancellation)) => {
-            return Err(CANCELLED_ERROR.to_string());
+            return Err(CANCELLED_ERROR.into());
         }
     };
 
@@ -466,119 +562,336 @@ async fn run_pairing(
 async fn run_location_session(
     pairing_record_bytes: Vec<u8>,
     peer_address: String,
+    tunnel_interface_index: u32,
     remote_pairing_port: u16,
     service_identifier: String,
     auth_tag: String,
     coordinates: Arc<Mutex<LocationCoordinates>>,
+    clear_only: bool,
+    needs_clear: Arc<AtomicBool>,
     started_callback: LocationStartedCallback,
     callback_context: usize,
     cancellation: Arc<AtomicBool>,
-) -> Result<(), String> {
-    let mut applied_coordinates = current_coordinates(&coordinates)?;
-    if remote_pairing_port == 0 || service_identifier.is_empty() || auth_tag.is_empty() {
-        return Err("Roam Control could not identify this iPhone's pairing service.".to_string());
+) -> (Result<(), LocationFailure>, LocationClearStatus) {
+    let initial_status = if clear_only {
+        LocationClearStatus::Unconfirmed
+    } else {
+        LocationClearStatus::NotNeeded
+    };
+    let mut clear_confirmed = false;
+    let result = async {
+        if cancellation.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let service_identifier = service_identifier.trim();
+        let auth_tag = auth_tag.trim();
+        if remote_pairing_port == 0 || service_identifier.is_empty() || auth_tag.is_empty() {
+            return Err(LocationFailure::new(
+                "Roam Control could not identify this iPhone's pairing service.",
+                false,
+            ));
+        }
+        let mut pairing_file = RpPairingFile::from_bytes(&pairing_record_bytes).map_err(|_| {
+            LocationFailure::new("The saved pairing record could not be read.", false)
+        })?;
+        let alt_irk = device_identity(&pairing_file).ok_or_else(|| {
+            LocationFailure::new(
+                "The saved pairing record is missing a valid device identity (alt_irk).",
+                false,
+            )
+        })?;
+        if !PeerDevice::validate_auth_tag(alt_irk, service_identifier, auth_tag) {
+            return Err(LocationFailure::new(
+                "The discovered device did not match the paired iPhone.",
+                false,
+            ));
+        }
+
+        let connect = async {
+            let peer_ip: IpAddr = peer_address.parse().map_err(|_| {
+                LocationFailure::new("LocalDevVPN returned an invalid device address.", false)
+            })?;
+            let pairing_address = SocketAddr::new(peer_ip, remote_pairing_port);
+            let stream = timeout(
+                SESSION_TIMEOUT,
+                connect_to_tunnel(pairing_address, tunnel_interface_index),
+            )
+            .await
+            .map_err(|_| {
+                LocationFailure::new(
+                    "LocalDevVPN did not make the iPhone connection available in time.",
+                    true,
+                )
+            })?
+            .map_err(|_| {
+                LocationFailure::new(
+                    "Roam Control could not reach the iPhone through LocalDevVPN.",
+                    true,
+                )
+            })?;
+
+            let socket = RpPairingSocket::new(stream);
+            let mut remote_pairing = RemotePairingClient::new(socket, DEFAULT_HOST_NAME);
+            timeout(SESSION_TIMEOUT, remote_pairing.attempt_pair_verify())
+                .await
+                .map_err(|_| {
+                    LocationFailure::new("The paired iPhone did not respond in time.", true)
+                })?
+                .map_err(|_| {
+                    LocationFailure::new("The iPhone rejected the saved pairing session.", false)
+                })?;
+            timeout(
+                SESSION_TIMEOUT,
+                remote_pairing.validate_pairing(&mut pairing_file),
+            )
+            .await
+            .map_err(|_| LocationFailure::new("Pairing verification took too long.", true))?
+            .map_err(|_| {
+                LocationFailure::new(
+                    "The saved pairing is no longer valid. Reset Device Setup and pair again.",
+                    false,
+                )
+            })?;
+
+            let tunnel_port = timeout(SESSION_TIMEOUT, remote_pairing.create_tcp_listener())
+                .await
+                .map_err(|_| {
+                    LocationFailure::new(
+                        "The iPhone did not create its secure tunnel in time.",
+                        true,
+                    )
+                })?
+                .map_err(|_| {
+                    LocationFailure::new("The iPhone could not create its secure tunnel.", true)
+                })?;
+            let tunnel_stream = timeout(
+                SESSION_TIMEOUT,
+                connect_to_tunnel(
+                    SocketAddr::new(peer_ip, tunnel_port),
+                    tunnel_interface_index,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                LocationFailure::new("LocalDevVPN did not open the secure tunnel in time.", true)
+            })?
+            .map_err(|_| {
+                LocationFailure::new(
+                    "Roam Control could not open the secure device tunnel.",
+                    true,
+                )
+            })?;
+            let tunnel = timeout(
+                SESSION_TIMEOUT,
+                connect_tls_psk_tunnel_native(tunnel_stream, remote_pairing.encryption_key()),
+            )
+            .await
+            .map_err(|_| {
+                LocationFailure::new("The encrypted device tunnel took too long to start.", true)
+            })?
+            .map_err(|_| {
+                LocationFailure::new("Roam Control could not secure the device tunnel.", true)
+            })?;
+
+            let client_ip: IpAddr = tunnel.info.client_address.parse().map_err(|_| {
+                LocationFailure::new("The iPhone returned an invalid tunnel address.", true)
+            })?;
+            let server_ip: IpAddr = tunnel.info.server_address.parse().map_err(|_| {
+                LocationFailure::new("The iPhone returned an invalid service address.", true)
+            })?;
+            let rsd_port = tunnel.info.server_rsd_port;
+            let adapter =
+                tcp::adapter::Adapter::new(Box::new(tunnel.into_inner()), client_ip, server_ip);
+            let mut handle = adapter.to_async_handle();
+
+            let rsd_stream = timeout(SESSION_TIMEOUT, handle.connect(rsd_port))
+                .await
+                .map_err(|_| {
+                    LocationFailure::new(
+                        "The iPhone's service directory took too long to respond.",
+                        true,
+                    )
+                })?
+                .map_err(|_| {
+                    LocationFailure::new(
+                        "Roam Control could not open the iPhone's service directory.",
+                        true,
+                    )
+                })?;
+            let mut handshake = timeout(SESSION_TIMEOUT, RsdHandshake::new(rsd_stream))
+                .await
+                .map_err(|_| {
+                    LocationFailure::new("The iPhone's service handshake took too long.", true)
+                })?
+                .map_err(|_| {
+                    LocationFailure::new(
+                        "Roam Control could not complete the iPhone service handshake.",
+                        true,
+                    )
+                })?;
+            let mut dvt = timeout(
+                SESSION_TIMEOUT,
+                LocationDtx::connect_rsd(&mut handle, &mut handshake),
+            )
+            .await
+            .map_err(|_| LocationFailure::new("The location service took too long to open.", true))?
+            .map_err(|_| {
+                LocationFailure::new(
+                    "The iPhone did not make its location service available.",
+                    true,
+                )
+            })?;
+            timeout(SESSION_TIMEOUT, dvt.server.read_message(0))
+                .await
+                .map_err(|_| {
+                    LocationFailure::new("The location service did not become ready in time.", true)
+                })?
+                .map_err(|_| {
+                    LocationFailure::new(
+                        "The iPhone's location service did not become ready.",
+                        true,
+                    )
+                })?;
+
+            Ok::<_, LocationFailure>(dvt)
+        };
+        let LocationDtx { server: mut dvt, requests } = tokio::select! {
+            biased;
+            _ = wait_for_cancellation(Arc::clone(&cancellation)) => return Ok(()),
+            response = timeout(LOCATION_CONNECT_TIMEOUT, connect) => {
+                response.map_err(|_| LocationFailure::new("The device connection took too long to open.", true))??
+            }
+        };
+
+        let mut applied = if clear_only {
+            None
+        } else {
+            Some(current_coordinates(&coordinates)?)
+        };
+        let mut location = tokio::select! {
+            biased;
+            _ = wait_for_cancellation(Arc::clone(&cancellation)) => return Ok(()),
+            response = timeout(SESSION_TIMEOUT, dvt.make_channel(LOCATION_CHANNEL)) => {
+                response.map_err(|_| LocationFailure::new("The location controls took too long to open.", true))?
+                    .map_err(|_| LocationFailure::new("Roam Control could not open the iPhone's location controls.", true))?
+            }
+        };
+        if let Some(initial) = &mut applied {
+            if cancellation.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            needs_clear.store(true, Ordering::Release);
+            let apply = apply_location(
+                &mut location,
+                &requests,
+                initial,
+                &coordinates,
+                &cancellation,
+                started_callback,
+                callback_context,
+            )
+            .await;
+            if let Err(error) = apply {
+                // A timed-out write may still have changed the device, and its late reply
+                // cannot acknowledge a clear on a fresh channel.
+                let clear = timeout(LOCATION_COMMAND_TIMEOUT, async {
+                    let mut fresh = dvt.make_channel(LOCATION_CHANNEL).await.map_err(|_| ())?;
+                    location_dtx::send(&mut fresh, &requests, "stopLocationSimulation", None, LOCATION_COMMAND_TIMEOUT)
+                        .await.map_err(|_| ())
+                })
+                .await;
+                match clear {
+                    Ok(Ok(())) => {
+                        needs_clear.store(false, Ordering::Release);
+                        clear_confirmed = true;
+                    }
+                    _ => return Err(clear_failure(Some(error))),
+                }
+                return Err(error);
+            }
+        }
+
+        let clear = location_dtx::send(&mut location, &requests, "stopLocationSimulation", None, LOCATION_COMMAND_TIMEOUT).await;
+        match clear {
+            Ok(()) => {
+                needs_clear.store(false, Ordering::Release);
+                clear_confirmed = true;
+                Ok(())
+            }
+            Err(error) => {
+                let mut failure = clear_failure(None);
+                // Retrying a user's stop may only send another clear, never a set.
+                failure.retryable = error.is_transient();
+                Err(failure)
+            },
+        }
+    };
+
+    // Recovery must still be considered pending if cancelled before contacting the device.
+    let result = result.await;
+    let status = if clear_confirmed {
+        LocationClearStatus::Confirmed
+    } else if needs_clear.load(Ordering::Acquire) {
+        LocationClearStatus::Unconfirmed
+    } else {
+        initial_status
+    };
+    (result, status)
+}
+
+// Both the discovery probe and later TCP connections must use LocalDevVPN's
+// interface even if a concurrently active Personal VPN owns the default route.
+async fn connect_to_tunnel(
+    address: SocketAddr,
+    interface_index: u32,
+) -> std::io::Result<TcpStream> {
+    let socket = TcpSocket::new_v4()?;
+    #[cfg(target_os = "ios")]
+    {
+        use std::os::fd::AsRawFd;
+
+        if interface_index == 0 {
+            return Err(std::io::Error::other(
+                "LocalDevVPN interface is unavailable",
+            ));
+        }
+        let result = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_BOUND_IF,
+                (&interface_index as *const u32).cast(),
+                std::mem::size_of::<u32>() as libc::socklen_t,
+            )
+        };
+        if result != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
     }
+    #[cfg(not(target_os = "ios"))]
+    let _ = interface_index;
+    socket.connect(address).await
+}
 
-    let mut pairing_file = RpPairingFile::from_bytes(&pairing_record_bytes)
-        .map_err(|_| "The saved pairing record could not be read.".to_string())?;
-    let alt_irk = pairing_file
-        .alt_irk()
-        .ok_or_else(|| "The saved pairing record is missing its device identity.".to_string())?;
-    if !PeerDevice::validate_auth_tag(alt_irk, &service_identifier, &auth_tag) {
-        return Err("The discovered device did not match the paired iPhone.".to_string());
-    }
-    check_location_cancellation(&cancellation)?;
-
-    let peer_ip: IpAddr = peer_address
-        .parse()
-        .map_err(|_| "LocalDevVPN returned an invalid device address.".to_string())?;
-    let pairing_address = SocketAddr::new(peer_ip, remote_pairing_port);
-    let stream = timeout(SESSION_TIMEOUT, TcpStream::connect(pairing_address))
-        .await
-        .map_err(|_| {
-            "LocalDevVPN did not make the iPhone connection available in time.".to_string()
-        })?
-        .map_err(|_| "Roam Control could not reach the iPhone through LocalDevVPN.".to_string())?;
-
-    let socket = RpPairingSocket::new(stream);
-    let mut remote_pairing = RemotePairingClient::new(socket, DEFAULT_HOST_NAME);
-    timeout(SESSION_TIMEOUT, remote_pairing.attempt_pair_verify())
-        .await
-        .map_err(|_| "The paired iPhone did not respond in time.".to_string())?
-        .map_err(|_| "The iPhone rejected the saved pairing session.".to_string())?;
-    timeout(
-        SESSION_TIMEOUT,
-        remote_pairing.validate_pairing(&mut pairing_file),
+async fn apply_location<R: ReadWrite>(
+    location: &mut Channel<'_, R>,
+    requests: &LocationRequests,
+    applied: &mut LocationCoordinates,
+    coordinates: &Arc<Mutex<LocationCoordinates>>,
+    cancellation: &AtomicBool,
+    started_callback: LocationStartedCallback,
+    callback_context: usize,
+) -> Result<(), LocationFailure> {
+    write_location(
+        location,
+        requests,
+        *applied,
+        "The iPhone did not accept the selected location.",
     )
-    .await
-    .map_err(|_| "Pairing verification took too long.".to_string())?
-    .map_err(|_| {
-        "The saved pairing is no longer valid. Reset Device Setup and pair again.".to_string()
-    })?;
-    check_location_cancellation(&cancellation)?;
-
-    let tunnel_port = timeout(SESSION_TIMEOUT, remote_pairing.create_tcp_listener())
-        .await
-        .map_err(|_| "The iPhone did not create its secure tunnel in time.".to_string())?
-        .map_err(|_| "The iPhone could not create its secure tunnel.".to_string())?;
-    let tunnel_stream = timeout(
-        SESSION_TIMEOUT,
-        TcpStream::connect(SocketAddr::new(peer_ip, tunnel_port)),
-    )
-    .await
-    .map_err(|_| "LocalDevVPN did not open the secure tunnel in time.".to_string())?
-    .map_err(|_| "Roam Control could not open the secure device tunnel.".to_string())?;
-    let tunnel = timeout(
-        SESSION_TIMEOUT,
-        connect_tls_psk_tunnel_native(tunnel_stream, remote_pairing.encryption_key()),
-    )
-    .await
-    .map_err(|_| "The encrypted device tunnel took too long to start.".to_string())?
-    .map_err(|_| "Roam Control could not secure the device tunnel.".to_string())?;
-
-    let client_ip: IpAddr = tunnel
-        .info
-        .client_address
-        .parse()
-        .map_err(|_| "The iPhone returned an invalid tunnel address.".to_string())?;
-    let server_ip: IpAddr = tunnel
-        .info
-        .server_address
-        .parse()
-        .map_err(|_| "The iPhone returned an invalid service address.".to_string())?;
-    let rsd_port = tunnel.info.server_rsd_port;
-    let adapter = tcp::adapter::Adapter::new(Box::new(tunnel.into_inner()), client_ip, server_ip);
-    let mut handle = adapter.to_async_handle();
-
-    let rsd_stream = timeout(SESSION_TIMEOUT, handle.connect(rsd_port))
-        .await
-        .map_err(|_| "The iPhone's service directory took too long to respond.".to_string())?
-        .map_err(|_| "Roam Control could not open the iPhone's service directory.".to_string())?;
-    let mut handshake = timeout(SESSION_TIMEOUT, RsdHandshake::new(rsd_stream))
-        .await
-        .map_err(|_| "The iPhone's service handshake took too long.".to_string())?
-        .map_err(|_| "Roam Control could not complete the iPhone service handshake.".to_string())?;
-    let mut dvt = timeout(
-        SESSION_TIMEOUT,
-        RemoteServerClient::connect_rsd(&mut handle, &mut handshake),
-    )
-    .await
-    .map_err(|_| "The location service took too long to open.".to_string())?
-    .map_err(|_| "The iPhone did not make its location service available.".to_string())?;
-    timeout(SESSION_TIMEOUT, dvt.read_message(0))
-        .await
-        .map_err(|_| "The location service did not become ready in time.".to_string())?
-        .map_err(|_| "The iPhone's location service did not become ready.".to_string())?;
-    let mut location = timeout(SESSION_TIMEOUT, LocationSimulationClient::new(&mut dvt))
-        .await
-        .map_err(|_| "The location controls took too long to open.".to_string())?
-        .map_err(|_| "Roam Control could not open the iPhone's location controls.".to_string())?;
-
-    location
-        .set(applied_coordinates.latitude, applied_coordinates.longitude)
-        .await
-        .map_err(|_| "The iPhone did not accept the selected location.".to_string())?;
-    if let Some(callback) = started_callback {
+    .await?;
+    if !cancellation.load(Ordering::Acquire)
+        && let Some(callback) = started_callback
+    {
         callback(callback_context as *mut c_void);
     }
 
@@ -588,21 +901,61 @@ async fn run_location_session(
         if cancellation.load(Ordering::Acquire) {
             break;
         }
-        let latest_coordinates = current_coordinates(&coordinates)?;
-        if latest_coordinates != applied_coordinates
-            || last_refresh.elapsed() >= Duration::from_secs(4)
-        {
-            location
-                .set(latest_coordinates.latitude, latest_coordinates.longitude)
-                .await
-                .map_err(|_| "The iPhone ended the active location session.".to_string())?;
-            applied_coordinates = latest_coordinates;
+        let latest = current_coordinates(coordinates)?;
+        if latest != *applied || last_refresh.elapsed() >= Duration::from_secs(4) {
+            write_location(
+                location,
+                requests,
+                latest,
+                "The iPhone ended the active location session.",
+            )
+            .await?;
+            *applied = latest;
             last_refresh = Instant::now();
         }
     }
-
-    let _ = location.clear().await;
     Ok(())
+}
+
+async fn write_location<R: ReadWrite>(
+    location: &mut Channel<'_, R>,
+    requests: &LocationRequests,
+    coordinates: LocationCoordinates,
+    error: &str,
+) -> Result<(), LocationFailure> {
+    location_dtx::send(
+        location,
+        requests,
+        "simulateLocationWithLatitude:longitude:",
+        Some(vec![
+            AuxValue::archived_value(coordinates.latitude),
+            AuxValue::archived_value(coordinates.longitude),
+        ]),
+        LOCATION_COMMAND_TIMEOUT,
+    ).await.map_err(|outcome| {
+        let message = if outcome == CommandError::Timeout {
+            format!("{error} The location command timed out.")
+        } else {
+            error.to_owned()
+        };
+        LocationFailure::new(message, outcome.is_transient())
+    })
+}
+
+fn clear_failure(prior: Option<LocationFailure>) -> LocationFailure {
+    let retryable = prior.as_ref().is_some_and(|error| error.retryable);
+    let message = "The iPhone did not confirm that its simulated location was cleared. Reconnect and restore your real location.";
+    LocationFailure::new(
+        prior.map_or_else(
+            || message.to_string(),
+            |error| format!("{} {message}", error.message),
+        ),
+        retryable,
+    )
+}
+
+fn device_identity(pairing_file: &RpPairingFile) -> Option<&[u8]> {
+    pairing_file.alt_irk().filter(|key| key.len() == 16)
 }
 
 fn current_coordinates(
@@ -612,14 +965,6 @@ fn current_coordinates(
         .lock()
         .map_err(|_| "Roam Control could not update the active location.".to_string())?;
     LocationCoordinates::validated(current.latitude, current.longitude)
-}
-
-fn check_location_cancellation(cancelled: &Arc<AtomicBool>) -> Result<(), String> {
-    if cancelled.load(Ordering::Acquire) {
-        Err(LOCATION_CANCELLED_ERROR.to_string())
-    } else {
-        Ok(())
-    }
 }
 
 async fn wait_for_cancellation(cancelled: Arc<AtomicBool>) {
@@ -728,5 +1073,109 @@ unsafe fn destroy_byte_buffer(pointer: *mut u8, length: usize) {
         unsafe { ptr::write_bytes(pointer, 0, length) };
         let slice = ptr::slice_from_raw_parts_mut(pointer, length);
         unsafe { drop(Box::from_raw(slice)) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_cancelled_location(clear_only: bool) -> (i32, LocationClearStatus) {
+        let session = rc_location_session_create();
+        let mut result = LocationResult::empty();
+        let record = [0_u8]; // Cancellation must take effect before parsing or connecting.
+        unsafe {
+            rc_location_session_cancel(session);
+            let code = rc_location_session_run(
+                session,
+                record.as_ptr(),
+                record.len(),
+                ptr::null(),
+                0,
+                1,
+                ptr::null(),
+                ptr::null(),
+                0.0,
+                0.0,
+                i32::from(clear_only),
+                None,
+                ptr::null_mut(),
+                &mut result,
+            );
+            let status = result.clear_status;
+            rc_location_result_destroy(&mut result);
+            rc_location_session_destroy(session);
+            (code, status)
+        }
+    }
+
+    #[test]
+    fn pre_cancelled_start_never_attempts_to_connect_or_clear() {
+        assert_eq!(
+            run_cancelled_location(false),
+            (0, LocationClearStatus::NotNeeded)
+        );
+    }
+
+    #[test]
+    fn pre_cancelled_restore_does_not_confirm_a_clear() {
+        assert_eq!(
+            run_cancelled_location(true),
+            (0, LocationClearStatus::Unconfirmed)
+        );
+    }
+
+    #[test]
+    fn pre_cancelled_pairing_never_waits_for_a_peer() {
+        let session = rc_remote_pairing_session_create();
+        let mut result = RemotePairingResult::empty();
+        unsafe {
+            rc_remote_pairing_session_cancel(session);
+            let code = rc_remote_pairing_session_run(
+                session,
+                ptr::null(),
+                ptr::null(),
+                None,
+                None,
+                ptr::null_mut(),
+                &mut result,
+            );
+            assert_eq!(code, 1);
+            assert_eq!(
+                CStr::from_ptr(result.error_message).to_str().unwrap(),
+                CANCELLED_ERROR
+            );
+            rc_remote_pairing_result_destroy(&mut result);
+            rc_remote_pairing_session_destroy(session);
+        }
+    }
+
+    #[test]
+    fn discovery_requires_a_16_byte_device_identity() {
+        let mut pairing = RpPairingFile::generate("test");
+        let identifier = c"2BE6E510-0325-4365-923E-B14C6F57DB3A";
+        let tag = c"kXjlTr2l";
+        let matches = |pairing: &RpPairingFile| {
+            let bytes = pairing.to_bytes();
+            unsafe {
+                rc_pairing_record_matches_service(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    identifier.as_ptr(),
+                    tag.as_ptr(),
+                ) == 1
+            }
+        };
+        assert!(!matches(&pairing));
+        pairing.alt_irk = Some(vec![0; 15]);
+        assert!(!matches(&pairing));
+        pairing.alt_irk = Some(
+            [
+                0x32, 0x0a, 0x7a, 0x64, 0x63, 0xf3, 0x5c, 0xcd, 0xa4, 0xbb, 0xd6, 0xeb, 0xe3, 0xab,
+                0xec, 0x8b,
+            ]
+            .to_vec(),
+        );
+        assert!(matches(&pairing));
     }
 }

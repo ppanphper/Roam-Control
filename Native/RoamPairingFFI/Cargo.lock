@@ -1160,6 +1160,8 @@ name = "roam_pairing_ffi"
 version = "0.1.0"
 dependencies = [
  "idevice",
+ "libc",
+ "plist",
  "tokio",
 ]
 

@@ -8,6 +8,7 @@ struct RoamControlApp: App {
 
     var body: some Scene {
         WindowGroup {
+            let language = appModel.featurePreferences.appLanguage
             Group {
                 if appModel.hasCompletedOnboarding || shouldBypassOnboarding {
                     HomeView(
@@ -22,6 +23,9 @@ struct RoamControlApp: App {
                 }
             }
                 .environment(appModel)
+                .environment(\.locale, language.locale)
+                .environment(\.layoutDirection, language.isRightToLeft ? .rightToLeft : .leftToRight)
+                .environment(\.appLocalization, AppLocalization(language: language))
                 .preferredColorScheme(preferredColorScheme)
                 .animation(
                     reduceMotion ? nil : .easeInOut(duration: 0.25),
